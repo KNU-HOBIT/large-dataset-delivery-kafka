@@ -15,7 +15,10 @@ import (
 var url string = "http://155.230.34.51:32145"
 var token string = os.Getenv("INFLUXDB_TOKEN")
 
-const n = 30
+// 쿼리 range를 n개로 divide. -> n개의 Job을 비동기적으로 Worker 쓰레드로 분배.
+const n = 45
+
+// Worker 쓰레드 수. 각 쓰레드마다 InfluxDB Client와 Kafka Prodcer객체 한 쌍이 <쿼리 & 메세지전송>(Job)을 병렬 처리.
 const worker_num = 3
 
 var topic = "iot-sensor-data-p3-r1-retention1h"

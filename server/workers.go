@@ -62,8 +62,8 @@ func (w *Worker) Start() {
 			&kafka.ConfigMap{
 				"bootstrap.servers":            "155.230.34.51:32100,155.230.34.52:32100,155.230.34.53:32100",
 				"acks":                         "all", // 모든 브로커의 확인을 받아야 성공으로 간주
-				"retries":                      5,     // 메시지 전송 실패 시 재시도 횟수
-				"queue.buffering.max.kbytes":   3145728,
+				"retries":                      20,    // 메시지 전송 실패 시 재시도 횟수
+				"queue.buffering.max.kbytes":   8457280,
 				"queue.buffering.max.messages": 1000000,
 			})
 		if err != nil {
@@ -122,7 +122,10 @@ func (w *Worker) Start() {
 					messagesProcessed++
 				}
 				// Ensure the delivery report handler has finished
-				producer.Flush(15 * 1000) // 15 seconds
+				unflushed := producer.Flush(15 * 1000) // 15 seconds
+				if unflushed > 0 {
+					fmt.Printf("unflushed %d msg.\n", unflushed)
+				}
 
 				fmt.Printf("worker %d produced records count: %d\n", w.ID, messagesProcessed)
 				*job.messagesCh <- messagesProcessed
