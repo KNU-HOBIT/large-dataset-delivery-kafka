@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"sync"
@@ -12,23 +13,20 @@ import (
 	"time"
 )
 
-var url string = "http://155.230.34.51:32145"
-var token string = os.Getenv("INFLUXDB_TOKEN")
+var config, _ = LoadConfig("config.json")
+
+var url string = config.InfluxDB.URL
+var token string = config.InfluxDB.Token
+
+var topic = config.Topics.Default
 
 // 쿼리 range를 n개로 divide. -> n개의 Job을 비동기적으로 Worker 쓰레드로 분배.
-const n = 45
-
-// Worker 쓰레드 수. 각 쓰레드마다 InfluxDB Client와 Kafka Prodcer객체 한 쌍이 <쿼리 & 메세지전송>(Job)을 병렬 처리.
-const worker_num = 3
-
-var topic = "iot-sensor-data-p3-r1-retention1h"
-
-var JobQueue = make(chan Job, 100)
+var JobQueue = make(chan Job, config.Jobs.JobQueueCapacity)
 
 func main() {
 	// 서버 설정 및 포트 설정
 	server := &http.Server{
-		Addr: ":3000", // 포트 3000 설정
+		Addr: config.Server.Port, // 포트 3001 설정
 	}
 
 	var wg sync.WaitGroup
@@ -36,7 +34,7 @@ func main() {
 	// 라우터 설정
 	handleRequests(&wg)
 
-	dispatcher := NewDispatcher(worker_num) // 10개의 워커로 구성된 워커 풀 생성
+	dispatcher := NewDispatcher(config.Jobs.WorkerNum) // 11개의 워커로 구성된 워커 풀 생성
 	dispatcher.Run(&wg)
 
 	// 별도의 고루틴에서 HTTP 서버 시작

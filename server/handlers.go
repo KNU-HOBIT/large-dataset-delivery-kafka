@@ -10,8 +10,9 @@ import (
 )
 
 type ResponseData struct {
-	TotalMessages int    `json:"total_messages"`
-	TotalTime     string `json:"total_time"`
+	TotalMessages int   `json:"totalMessages"`
+	StartTime     int64 `json:"startTime"` // 밀리초 단위의 시작 시간 에포크
+	EndTime       int64 `json:"endTime"`   // 밀리초 단위의 종료 시간 에포크
 }
 
 func handleRequests(wg *sync.WaitGroup) {
@@ -21,14 +22,14 @@ func handleRequests(wg *sync.WaitGroup) {
 		case "GET":
 			// 데이터 읽기
 			joblist := []*Job{}
-			messagesCh := make(chan int, n)
+			messagesCh := make(chan int, config.Jobs.DividedJobs)
 			startStr := r.URL.Query().Get("start")
 			endStr := r.URL.Query().Get("end")
 			eqpId := r.URL.Query().Get("eqp_id")
 
 			fmt.Println("startStr:", startStr, "endStr:", endStr, "Equipment ID:", eqpId)
 
-			timePairs, err := divideTime(startStr, endStr, n)
+			timePairs, err := divideTime(startStr, endStr, config.Jobs.DividedJobs)
 			if err != nil {
 				fmt.Println("Error parsing time:", err)
 				return
@@ -53,20 +54,24 @@ func handleRequests(wg *sync.WaitGroup) {
 			// 모든 작업이 완료될 때까지 대기
 			wg.Wait()
 
+			// 총 처리 시간 계산
+			endTime := time.Now()
+			elapsed := time.Since(startTime)
+
 			// 메시지 카운트 집계
 			var total_msg_count int = 0
 			for i := 0; i < len(joblist); i++ {
 				total_msg_count += <-messagesCh
 			}
 
-			// 총 처리 시간 계산
-			elapsed := time.Since(startTime)
-
 			// 응답 데이터 구성 및 JSON 직렬화
+			// 응답 데이터 구성
 			responseData := ResponseData{
 				TotalMessages: total_msg_count,
-				TotalTime:     elapsed.String(),
+				StartTime:     startTime.UnixNano() / 1e6, // 밀리초 단위로 변환
+				EndTime:       endTime.UnixNano() / 1e6,   // 밀리초 단위로 변환
 			}
+			fmt.Println(responseData)
 			responseJSON, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(responseData)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)

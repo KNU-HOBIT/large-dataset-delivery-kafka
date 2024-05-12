@@ -7,7 +7,6 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
-	jsoniter "github.com/json-iterator/go"
 )
 
 type Worker struct {
@@ -36,9 +35,10 @@ func (w *Worker) handleDeliveryReports(producer *kafka.Producer) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
 					fmt.Printf("Delivery failed: %v\n", ev.TopicPartition)
-				} else {
-					// fmt.Printf("Delivered message to %v\n", ev.TopicPartition)
 				}
+				// else {
+				// 	// fmt.Printf("Delivered message to %v\n", ev.TopicPartition)
+				// }
 			}
 
 		case <-w.quit:
@@ -60,11 +60,16 @@ func (w *Worker) Start() {
 		//INIT kafka producer
 		producer, err := kafka.NewProducer(
 			&kafka.ConfigMap{
-				"bootstrap.servers":            "155.230.34.51:32100,155.230.34.52:32100,155.230.34.53:32100",
-				"acks":                         "all", // 모든 브로커의 확인을 받아야 성공으로 간주
-				"retries":                      20,    // 메시지 전송 실패 시 재시도 횟수
-				"queue.buffering.max.kbytes":   8457280,
-				"queue.buffering.max.messages": 1000000,
+				"bootstrap.servers":  config.Kafka.BootstrapServers,
+				"acks":               config.Kafka.Acks,
+				"enable.idempotence": config.Kafka.EnableIdempotence,
+				"compression.type":   config.Kafka.CompressionType,
+				// "debug":              "msg",
+				// "linger.ms":          500,
+				// "batch.size":         5000000,
+				// "queue.buffering.max.kbytes":   MaxKBytes,
+				// "queue.buffering.max.messages": MaxMessages,
+
 			})
 		if err != nil {
 			panic(err)
@@ -81,13 +86,18 @@ func (w *Worker) Start() {
 
 			select {
 			case job := <-w.JobChannel:
+
 				// 여기서 실제 작업을 처리
 				// 예제: job의 데이터를 출력
-
+				flushEntered := false                // flush 작업 진입 여부
+				var flushStartTime time.Time         // flush 작업 시작 시간
+				var startTime time.Time = time.Now() // 작업 시작 시간 기록
 				fmt.Printf("worker%d: job start about: %s~%s\n", w.ID, job.startStr, job.endStr)
-				records := ReadData(&client, job.startStr, job.endStr, job.eqpId)
+				// records := ReadData(&client, job.startStr, job.endStr, job.eqpId)
 				// fmt.Printf("worker %d read records count: %d\n", w.ID, len(records))
-
+				// 데이터 읽기 및 Kafka로 직접 전송
+				var totalProcessed int = 0
+				totalProcessed, recordsPerSecond := ReadDataAndSendDirectly(&client, job.startStr, job.endStr, job.eqpId, producer)
 				// // `records` 리스트가 비어있지 않은 경우, 첫 번째 요소 출력
 				// if len(records) > 0 {
 				// 	fmt.Printf("첫 번째 record 요소: %+v\n", records[0])
@@ -95,40 +105,29 @@ func (w *Worker) Start() {
 				// 	fmt.Println("record 리스트가 비어있습니다.")
 				// }
 
-				var messagesProcessed int = 0
-				for _, record := range records {
-					// 각 record를 JSON으로 직렬화
-					jsonRecord, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(record)
-					if err != nil {
-						fmt.Printf("JSON 데이터를 문자열로 직렬화하는 중 에러 발생: %v", err)
-						continue // 에러가 발생한 경우, 다음 record 처리로 넘어감
-					}
+				// records를 bundleSize개 단위로 묶습니다.
+				// groupedRecords := GroupRecords(records, bundleSize)
 
-					// // 최초 반복에서만 특정 작업을 수행
-					// if i == 0 {
-					// 	fmt.Printf("jsonRecord의 첫 부분: %s\n", string(jsonRecord)[:min(100, len(jsonRecord))])
-					// }
-
-					// Kafka 메시지 생성 및 전송
-					err = producer.Produce(&kafka.Message{
-						TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
-						Value:          jsonRecord,
-					}, nil)
-					if err != nil {
-						fmt.Printf("Error producing message: %s\n", err)
-
-					}
-
-					messagesProcessed++
-				}
 				// Ensure the delivery report handler has finished
 				unflushed := producer.Flush(15 * 1000) // 15 seconds
-				if unflushed > 0 {
-					fmt.Printf("unflushed %d msg.\n", unflushed)
+				for unflushed > 0 {
+					if !flushEntered {
+						flushStartTime = time.Now() // 첫 flush 작업 시작 시간 기록
+						flushEntered = true
+					}
+					fmt.Printf("worker%d: unflushed %d msg.\n", w.ID, unflushed)
+					unflushed = producer.Flush(15 * 1000) // 15 seconds
 				}
-
-				fmt.Printf("worker %d produced records count: %d\n", w.ID, messagesProcessed)
-				*job.messagesCh <- messagesProcessed
+				var endTime time.Time
+				if flushEntered {
+					endTime = time.Now() // flush 진입이 있었을 경우, flush 완료 시간을 종료 시간으로 기록
+					fmt.Printf("worker%d: flush duration %v\n", w.ID, endTime.Sub(flushStartTime))
+				} else {
+					endTime = time.Now() // flush 진입이 없었을 경우, 현재 시간을 종료 시간으로 기록
+				}
+				fmt.Printf("worker %d produced records count: %d job completed in %v\n", w.ID, totalProcessed, endTime.Sub(startTime))
+				fmt.Printf("worker %d processed Records/second: %.2f\n", w.ID, recordsPerSecond)
+				*job.messagesCh <- totalProcessed
 				w.wg.Done() // 작업 처리 완료를 알림
 
 			case <-w.quit:
