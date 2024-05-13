@@ -19,3 +19,7 @@
 
 # Go workspace file
 go.work
+
+client/config.yaml
+
+server/config.json
