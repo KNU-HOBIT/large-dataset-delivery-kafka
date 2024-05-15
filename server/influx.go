@@ -11,11 +11,11 @@ import (
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 )
 
-func ReadDataAndSendDirectly(client *influxdb2.Client, start string, end string, eqpId string, producer *kafka.Producer) (int, float64) {
+func ReadDataAndSendDirectly(client *influxdb2.Client, bucket, start, end, eqpId string, producer *kafka.Producer) (int, float64) {
 	org := "influxdata"
 	queryAPI := (*client).QueryAPI(org)
 	query := `
-    from(bucket: "hobit_iot_sensor")
+    from(bucket: "` + bucket + `")
     |> range(start: ` + start + `, stop: ` + end + `)
     |> filter(fn: (r) => r["eqp_id"] == "` + eqpId + `")
     `

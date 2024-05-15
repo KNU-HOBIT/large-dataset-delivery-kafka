@@ -26,8 +26,9 @@ func handleRequests(wg *sync.WaitGroup) {
 			startStr := r.URL.Query().Get("start")
 			endStr := r.URL.Query().Get("end")
 			eqpId := r.URL.Query().Get("eqp_id")
+			bucket := r.URL.Query().Get("bucket")
 
-			fmt.Println("startStr:", startStr, "endStr:", endStr, "Equipment ID:", eqpId)
+			fmt.Println("startStr:", startStr, "endStr:", endStr, "Equipment ID:", eqpId, "bucket:", bucket)
 
 			timePairs, err := divideTime(startStr, endStr, config.Jobs.DividedJobs)
 			if err != nil {
@@ -35,14 +36,10 @@ func handleRequests(wg *sync.WaitGroup) {
 				return
 			}
 
-			// joblist init
-			if len(joblist) > 0 {
-				clear(joblist)
-			} else {
-				for _, pair := range timePairs {
-					joblist = append(joblist, newJob(pair.Start, pair.End, eqpId, &messagesCh))
-				}
+			for _, pair := range timePairs {
+				joblist = append(joblist, newJob(bucket, pair.Start, pair.End, eqpId, &messagesCh))
 			}
+
 			startTime := time.Now()
 
 			// 작업(job) 생성 및 JobQueue에 추가
