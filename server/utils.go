@@ -2,7 +2,8 @@ package main
 
 import "time"
 
-func divideTime(startStr, endStr string, n int) ([]struct{ Start, End string }, error) {
+func divideTime(startStr, endStr string) ([]struct{ Start, End string }, error) {
+	n := config.Jobs.DividedJobs
 	var result []struct{ Start, End string }
 
 	start, err := time.Parse(time.RFC3339, startStr)

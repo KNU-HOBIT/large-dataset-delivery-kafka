@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sync"
 )
 
 type Dispatcher struct {
@@ -16,9 +15,9 @@ func NewDispatcher(maxWorkers int) *Dispatcher {
 	return &Dispatcher{WorkerPool: pool, MaxWorkers: maxWorkers}
 }
 
-func (d *Dispatcher) Run(wg *sync.WaitGroup) {
+func (d *Dispatcher) Run() {
 	for i := 0; i < d.MaxWorkers; i++ {
-		worker := NewWorker(d.WorkerPool, i+1, wg)
+		worker := NewWorker(d.WorkerPool, i+1)
 		d.Workers = append(d.Workers, worker) // 워커를 슬라이스에 추가
 		worker.Start()
 	}
@@ -27,16 +26,14 @@ func (d *Dispatcher) Run(wg *sync.WaitGroup) {
 
 func (d *Dispatcher) dispatch() {
 	fmt.Println("dispatch start")
-	for {
-		select {
-		case job := <-JobQueue:
-			// JobQueue에서 작업을 받아옴
-			go func(job Job) {
-				jobChannel := <-d.WorkerPool
-				// 작업을 워커에게 전달
-				jobChannel <- job
-			}(job)
-		}
+	// Use for range to automatically listen to channel until it's closed
+	for job := range JobQueue {
+		go func(job Job) {
+			// Retrieve a worker's job channel from the pool
+			jobChannel := <-d.WorkerPool
+			// Send the job to the retrieved worker
+			jobChannel <- job
+		}(job)
 	}
 }
 

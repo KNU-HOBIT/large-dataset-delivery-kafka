@@ -24,9 +24,6 @@ type Config struct {
 		JobQueueCapacity int `json:"jobQueueCapacity"`
 		DividedJobs      int `json:"dividedJobs"`
 	} `json:"jobs"`
-	Topics struct {
-		Default string `json:"default"`
-	} `json:"topics"`
 }
 
 func LoadConfig(filename string) (Config, error) {

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sync"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
@@ -14,16 +13,14 @@ type Worker struct {
 	WorkerPool chan chan Job
 	JobChannel chan Job
 	quit       chan bool
-	wg         *sync.WaitGroup
 }
 
-func NewWorker(workerPool chan chan Job, id int, wg *sync.WaitGroup) Worker {
+func NewWorker(workerPool chan chan Job, id int) Worker {
 	return Worker{
 		ID:         id,
 		WorkerPool: workerPool,
 		JobChannel: make(chan Job),
 		quit:       make(chan bool),
-		wg:         wg,
 	}
 }
 
@@ -98,7 +95,7 @@ func (w *Worker) Start() {
 				// 데이터 읽기 및 Kafka로 직접 전송
 				var totalProcessed int = 0
 				totalProcessed, recordsPerSecond := ReadDataAndSendDirectly(
-					&client, job.bucket, job.startStr, job.endStr, job.eqpId, producer)
+					&client, job.bucket, job.startStr, job.endStr, job.eqpId, job.sendTopic, producer)
 				// // `records` 리스트가 비어있지 않은 경우, 첫 번째 요소 출력
 				// if len(records) > 0 {
 				// 	fmt.Printf("첫 번째 record 요소: %+v\n", records[0])
@@ -129,7 +126,7 @@ func (w *Worker) Start() {
 				fmt.Printf("worker %d produced records count: %d job completed in %v\n", w.ID, totalProcessed, endTime.Sub(startTime))
 				fmt.Printf("worker %d processed Records/second: %.2f\n", w.ID, recordsPerSecond)
 				*job.messagesCh <- totalProcessed
-				w.wg.Done() // 작업 처리 완료를 알림
+				(*job.wg).Done() // 작업 처리 완료를 알림
 
 			case <-w.quit:
 				// 워커 종료
