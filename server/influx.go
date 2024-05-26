@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"sort"
 
 	"fmt"
 	"log"
@@ -9,30 +10,37 @@ import (
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
+	jsoniter "github.com/json-iterator/go"
 )
 
 func CheckStartEndRange(client *influxdb2.Client, bucket, measurement, tagKey, tagValue string) (startTsStr, endTsStr string) {
 	org := "influxdata"
 	queryAPI := (*client).QueryAPI(org)
 
+	baseQuery := fmt.Sprintf(`
+	from(bucket: "%s")
+		|> range(start: 0)
+		|> filter(fn: (r) => r._measurement == "%s")`, bucket, measurement)
+
 	// Define the query for getting the first timestamp
-	firstQuery := `
-	from(bucket: "` + bucket + `")
-		|> range(start: 0)  // Query all data
-		|> filter(fn: (r) => r._measurement == "` + measurement + `")
-		|> filter(fn: (r) => r["` + tagKey + `"] == "` + tagValue + `")
-		|> first()
-	`
+	firstQuery := baseQuery
+	if tagKey != "" && tagValue != "" {
+		firstQuery += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`, tagKey, tagValue)
+	} else {
+		firstQuery += `|> group()`
+	}
+	firstQuery += `|> first()`
 
 	// Define the query for getting the last timestamp
-	lastQuery := `
-	from(bucket: "` + bucket + `")
-		|> range(start: 0)  // Query all data
-		|> filter(fn: (r) => r._measurement == "` + measurement + `")
-		|> filter(fn: (r) => r["` + tagKey + `"] == "` + tagValue + `")
-		|> last()
-	`
+	lastQuery := baseQuery
+	if tagKey != "" && tagValue != "" {
+		lastQuery += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`, tagKey, tagValue)
+	} else {
+		lastQuery += `|> group()`
+	}
+	lastQuery += `|> last()`
 
+	
 	// Execute the first query
 	firstResults, err := queryAPI.Query(context.Background(), firstQuery)
 	if err != nil {
@@ -70,12 +78,16 @@ func ReadDataAndSendDirectly(client *influxdb2.Client,
 
 	org := "influxdata"
 	queryAPI := (*client).QueryAPI(org)
-	query := `
-    from(bucket: "` + bucket + `")
-    |> range(start: ` + start + `, stop: ` + end + `)
-	|> filter(fn: (r) => r._measurement == "` + measurement + `")
-    |> filter(fn: (r) => r["` + tagKey + `"] == "` + tagValue + `")
-    `
+	query := fmt.Sprintf(`
+	from(bucket: "%s")
+	|> range(start: %s, stop: %s)
+	|> filter(fn: (r) => r._measurement == "%s")
+	`, bucket, start, end, measurement)
+	
+	if tagKey != "" && tagValue != "" {
+		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`, tagKey, tagValue)
+	}
+
 	startTime := time.Now()
 	results, err := queryAPI.Query(context.Background(), query)
 	if err != nil {
@@ -108,4 +120,158 @@ func ReadDataAndSendDirectly(client *influxdb2.Client,
 	// }
 
 	return totalProcessed, recordsPerSecond
+}
+
+
+func getMeasurements(client *influxdb2.Client) ([]Measurement, error) {
+	org := "influxdata"
+
+	// Create the Bucket API client
+	bucketAPI := (*client).BucketsAPI()
+
+	// Retrieve the list of buckets
+	buckets, err := bucketAPI.FindBucketsByOrgName(context.Background(), org)
+	if err != nil {
+		return nil, err
+	}
+
+	// Retrieve the list of measurements for each bucket
+	queryAPI := (*client).QueryAPI(org)
+	var measurements []Measurement
+
+	for _, bucket := range *buckets {
+		query := fmt.Sprintf(`import "influxdata/influxdb/v1" v1.measurements(bucket: "%s")`, bucket.Name)
+		result, err := queryAPI.Query(context.Background(), query)
+		if err != nil {
+			return nil, err
+		}
+
+		for result.Next() {
+			measurements = append(measurements, Measurement{
+				BucketName:  bucket.Name,
+				Measurement: result.Record().ValueByKey("_value").(string),
+			})
+		}
+		if result.Err() != nil {
+			return nil, result.Err()
+		}
+	}
+
+	return measurements, nil
+}
+
+func queryInfluxDB(client *influxdb2.Client, bucket, measurement, tagKey, tagValue string) (map[string]interface{}, error) {
+	org := "influxdata"
+	queryAPI := (*client).QueryAPI(org)
+
+	startQuery := buildQuery(bucket, measurement, tagKey, tagValue, "first")
+	endQuery := buildQuery(bucket, measurement, tagKey, tagValue, "last")
+	countQuery := buildQuery(bucket, measurement, tagKey, tagValue, "count")
+
+	// Execute start query
+	startResult, err := queryAPI.Query(context.Background(), startQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	var startTime time.Time
+	var startValue string
+	var columns []string
+	var data []map[string]interface{}
+	if startResult.Next() {
+		startTime = startResult.Record().Time()
+		startValue = startResult.Record().ValueByKey("_value").(string)
+
+		var jsonData map[string]interface{}
+		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(startValue), &jsonData); err != nil {
+			return nil, err
+		}
+
+		for key := range jsonData {
+			columns = append(columns, key)
+		}
+		sort.Strings(columns) // Ensure columns are sorted
+		data = append(data, jsonData)
+	}
+	if startResult.Err() != nil {
+		return nil, startResult.Err()
+	}
+
+	// Execute end query
+	endResult, err := queryAPI.Query(context.Background(), endQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	var endTime time.Time
+	var endValue string
+	if endResult.Next() {
+		endTime = endResult.Record().Time()
+		endValue = endResult.Record().ValueByKey("_value").(string)
+
+		var jsonData map[string]interface{}
+		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(endValue), &jsonData); err != nil {
+			return nil, err
+		}
+		data = append(data, jsonData)
+	}
+	if endResult.Err() != nil {
+		return nil, endResult.Err()
+	}
+
+	// Execute count query
+	countResult, err := queryAPI.Query(context.Background(), countQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	var count int64
+	if countResult.Next() {
+		count = countResult.Record().Value().(int64)
+	}
+	if countResult.Err() != nil {
+		return nil, countResult.Err()
+	}
+
+	// Extract only the values for the data field
+	dataValues := make([][]interface{}, len(data))
+	for i, record := range data {
+		values := make([]interface{}, len(columns))
+		for j, column := range columns {
+			values[j] = record[column]
+		}
+		dataValues[i] = values
+	}
+
+	// Prepare the response data
+	responseData := map[string]interface{}{
+		"start":       startTime.Format(time.RFC3339Nano),
+		"end":         endTime.Format(time.RFC3339Nano),
+		"bucket":      bucket,
+		"measurement": measurement,
+		"count":       count,
+		"columns":     columns,
+		"data":        dataValues,
+	}
+
+	return responseData, nil
+}
+
+func buildQuery(bucket, measurement, tagKey, tagValue, aggregation string) string {
+	query := fmt.Sprintf(`
+		from(bucket: "%s")
+			|> range(start: 0)
+			|> filter(fn: (r) => r._measurement == "%s")`, bucket, measurement)
+
+	if tagKey != "" && tagValue != "" {
+		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`, tagKey, tagValue)
+	} else {
+		query += `|> group()`
+	}
+
+	query += fmt.Sprintf(`
+			|> %s()
+			|> limit(n: 1)`, aggregation)
+
+	return query
 }

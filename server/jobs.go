@@ -9,7 +9,6 @@ type Job struct {
 	measurement string
 	tagKey string
 	tagValue string
-	eqpId      string
 	sendTopic  string
 	messagesCh *chan int
 	wg         **sync.WaitGroup
