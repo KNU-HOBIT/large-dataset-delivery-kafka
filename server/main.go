@@ -10,6 +10,9 @@ import (
 	"os/signal"
 	"syscall"
 	"time"
+
+	pb "github.com/noFlowWater/large-dataset-delivery-kafka/server/examplepb"
+	"google.golang.org/protobuf/proto"
 )
 
 var config, _ = LoadConfig("config.json")
@@ -21,6 +24,8 @@ var token string = config.InfluxDB.Token
 var JobQueue = make(chan Job, config.Jobs.JobQueueCapacity)
 
 func main() {
+
+	example()
 	// 서버 설정 및 포트 설정
 	server := &http.Server{
 		Addr: config.Server.Port, // 포트 3001 설정
@@ -57,4 +62,35 @@ func main() {
 	}
 
 	fmt.Println("Server exited properly")
+}
+
+func example() {
+	// 메시지 생성
+	person := &pb.Person{
+		Id:    1234,
+		Name:  "John Doe",
+		Email: "jdoe@example.com",
+		Phones: []*pb.Person_PhoneNumber{
+			{Number: "555-4321", Type: pb.PhoneType_PHONE_TYPE_HOME},
+		},
+	}
+
+	// 메시지 직렬화
+	data, err := proto.Marshal(person)
+	if err != nil {
+		log.Fatalf("Marshaling error: %v", err)
+	}
+
+	// 직렬화된 데이터 출력
+	fmt.Printf("Serialized data: %x\n", data)
+
+	// 메시지 역직렬화
+	newPerson := &pb.Person{}
+	err = proto.Unmarshal(data, newPerson)
+	if err != nil {
+		log.Fatalf("Unmarshaling error: %v", err)
+	}
+
+	// 역직렬화된 데이터 출력
+	fmt.Printf("Unmarshaled data: %v\n", newPerson)
 }

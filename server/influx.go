@@ -11,7 +11,7 @@ import (
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 )
 
-func CheckStartEndRange(client *influxdb2.Client, bucket, eqpId string) (startTsStr, endTsStr string) {
+func CheckStartEndRange(client *influxdb2.Client, bucket, measurement, tagKey, tagValue string) (startTsStr, endTsStr string) {
 	org := "influxdata"
 	queryAPI := (*client).QueryAPI(org)
 
@@ -19,7 +19,8 @@ func CheckStartEndRange(client *influxdb2.Client, bucket, eqpId string) (startTs
 	firstQuery := `
 	from(bucket: "` + bucket + `")
 		|> range(start: 0)  // Query all data
-		|> filter(fn: (r) => r["eqp_id"] == "` + eqpId + `")
+		|> filter(fn: (r) => r._measurement == "` + measurement + `")
+		|> filter(fn: (r) => r["` + tagKey + `"] == "` + tagValue + `")
 		|> first()
 	`
 
@@ -27,7 +28,8 @@ func CheckStartEndRange(client *influxdb2.Client, bucket, eqpId string) (startTs
 	lastQuery := `
 	from(bucket: "` + bucket + `")
 		|> range(start: 0)  // Query all data
-		|> filter(fn: (r) => r["eqp_id"] == "` + eqpId + `")
+		|> filter(fn: (r) => r._measurement == "` + measurement + `")
+		|> filter(fn: (r) => r["` + tagKey + `"] == "` + tagValue + `")
 		|> last()
 	`
 
@@ -62,13 +64,17 @@ func CheckStartEndRange(client *influxdb2.Client, bucket, eqpId string) (startTs
 	return startTsStr, endTsStr
 }
 
-func ReadDataAndSendDirectly(client *influxdb2.Client, bucket, start, end, eqpId, topic string, producer *kafka.Producer) (int, float64) {
+func ReadDataAndSendDirectly(client *influxdb2.Client, 
+	start, end, bucket,  measurement, tagKey, tagValue, topic string, 
+	producer *kafka.Producer) (int, float64) {
+
 	org := "influxdata"
 	queryAPI := (*client).QueryAPI(org)
 	query := `
     from(bucket: "` + bucket + `")
     |> range(start: ` + start + `, stop: ` + end + `)
-    |> filter(fn: (r) => r["eqp_id"] == "` + eqpId + `")
+	|> filter(fn: (r) => r._measurement == "` + measurement + `")
+    |> filter(fn: (r) => r["` + tagKey + `"] == "` + tagValue + `")
     `
 	startTime := time.Now()
 	results, err := queryAPI.Query(context.Background(), query)

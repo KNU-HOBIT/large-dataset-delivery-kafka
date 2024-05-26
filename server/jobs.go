@@ -3,21 +3,26 @@ package main
 import "sync"
 
 type Job struct {
-	bucket     string
 	startStr   string
 	endStr     string
+	bucket     string
+	measurement string
+	tagKey string
+	tagValue string
 	eqpId      string
 	sendTopic  string
 	messagesCh *chan int
 	wg         **sync.WaitGroup
 }
 
-func newJob(bucket, startStr, endStr, eqpId, sendTopic string, messagesCh *chan int, wg **sync.WaitGroup) *Job {
+func newJob( startStr, endStr, bucket, measurement, tagKey, tagValue, sendTopic string, messagesCh *chan int, wg **sync.WaitGroup) *Job {
 	p := Job{
-		bucket:     bucket,
 		startStr:   startStr,
 		endStr:     endStr,
-		eqpId:      eqpId,
+		bucket:     bucket,
+		measurement: measurement,
+		tagKey: tagKey,
+		tagValue: tagValue,
 		sendTopic:  sendTopic,
 		messagesCh: messagesCh,
 		wg:         wg,

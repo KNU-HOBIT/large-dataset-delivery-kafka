@@ -1,4 +1,4 @@
-module github.com/noFlowWater/large-dataset-delivery-kafka
+module github.com/noFlowWater/large-dataset-delivery-kafka/server
 
 go 1.22.2
 
@@ -6,6 +6,7 @@ require (
 	github.com/confluentinc/confluent-kafka-go v1.9.2
 	github.com/influxdata/influxdb-client-go/v2 v2.13.0
 	github.com/json-iterator/go v1.1.12
+	google.golang.org/protobuf v1.34.1
 )
 
 require (

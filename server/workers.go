@@ -95,7 +95,8 @@ func (w *Worker) Start() {
 				// 데이터 읽기 및 Kafka로 직접 전송
 				var totalProcessed int = 0
 				totalProcessed, recordsPerSecond := ReadDataAndSendDirectly(
-					&client, job.bucket, job.startStr, job.endStr, job.eqpId, job.sendTopic, producer)
+					&client, job.startStr, job.endStr,job.bucket, job.measurement, 
+					job.tagKey, job.tagValue, job.sendTopic, producer)
 				// // `records` 리스트가 비어있지 않은 경우, 첫 번째 요소 출력
 				// if len(records) > 0 {
 				// 	fmt.Printf("첫 번째 record 요소: %+v\n", records[0])
