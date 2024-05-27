@@ -16,21 +16,23 @@ type ErrorResponse struct {
 }
 
 type ResponseData struct {
-	QStartStr     string `json:"queryStartStr"`
-	QEndStr       string `json:"queryEndStr"`
-	BucketStr     string `json:"bucketStr"`
-	MeasurementStr 	string `json:"measurementStr"`
-	TagKeyStr string `json:"tagKeyStr"`
-	TagValueStr string `json:"tagValueStr"`
-	SendTopicStr  string `json:"sendTopicStr"`
-	TotalMessages int    `json:"totalMessages"`
-	StartTime     int64  `json:"startTimeMillis"`
-	EndTime       int64  `json:"endTimeMillis"`
+	QStartStr      string `json:"queryStartStr"`
+	QEndStr        string `json:"queryEndStr"`
+	BucketStr      string `json:"bucketStr"`
+	MeasurementStr string `json:"measurementStr"`
+	TagKeyStr      string `json:"tagKeyStr"`
+	TagValueStr    string `json:"tagValueStr"`
+	SendTopicStr   string `json:"sendTopicStr"`
+	TotalMessages  int    `json:"totalMessages"`
+	StartTime      int64  `json:"startTimeMillis"`
+	EndTime        int64  `json:"endTimeMillis"`
 }
 
-type Measurement struct {
+type Dataset struct {
 	BucketName  string `json:"bucket_name"`
 	Measurement string `json:"measurement"`
+	TagKeyStr   string `json:"tagKeyStr"`
+	TagValueStr string `json:"tagValueStr"`
 }
 
 func handleRequests() {
@@ -45,7 +47,7 @@ func handleRequestD(w http.ResponseWriter, r *http.Request) {
 	// bucket-detail
 	switch r.Method {
 	case "GET":
-		
+
 		Bucket := r.URL.Query().Get("bucket_name")
 		Measurement := r.URL.Query().Get("measurement")
 		tagKey := r.URL.Query().Get("tag_key")
@@ -67,7 +69,7 @@ func handleRequestD(w http.ResponseWriter, r *http.Request) {
 				SetPrecision(time.Millisecond).
 				SetHTTPRequestTimeout(900))
 		defer client.Close()
-		
+
 		responseData, err := queryInfluxDB(&client, Bucket, Measurement, tagKey, tagValue)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -167,16 +169,16 @@ func handleRequestB(w http.ResponseWriter, r *http.Request) {
 			// 응답 데이터 구성 및 JSON 직렬화
 			// 응답 데이터 구성
 			responseData := ResponseData{
-				QStartStr:     		startTsStr,
-				QEndStr:       		endTsStr,
-				BucketStr:     		bucket,
-				MeasurementStr:     measurement,
-				TagKeyStr:			tagKey,
-				TagValueStr: 		tagValue,
-				SendTopicStr:  		sendTopic,
-				TotalMessages: 		total_msg_count,
-				StartTime:     		start_time_millis, // 밀리초 단위로 변환
-				EndTime:       		end_time_millis,   // 밀리초 단위로 변환
+				QStartStr:      startTsStr,
+				QEndStr:        endTsStr,
+				BucketStr:      bucket,
+				MeasurementStr: measurement,
+				TagKeyStr:      tagKey,
+				TagValueStr:    tagValue,
+				SendTopicStr:   sendTopic,
+				TotalMessages:  total_msg_count,
+				StartTime:      start_time_millis, // 밀리초 단위로 변환
+				EndTime:        end_time_millis,   // 밀리초 단위로 변환
 			}
 
 			responseJSON, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(responseData)
@@ -203,11 +205,13 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 		endStr := r.URL.Query().Get("end")
 		bucket := r.URL.Query().Get("bucket")
 		measurement := r.URL.Query().Get("measurement")
-		tagKey := r.URL.Query().Get("tag_key") // null 일 경우 모든 tag 데이터에 대해서 요청.
+		tagKey := r.URL.Query().Get("tag_key")     // null 일 경우 모든 tag 데이터에 대해서 요청.
 		tagValue := r.URL.Query().Get("tag_value") // null 일 경우 모든 tag 데이터에 대해서 요청.
 		sendTopic := r.URL.Query().Get("send_topic")
 
-		if !validateParams(w, []string{startStr, endStr, bucket, measurement, sendTopic}) {return}
+		if !validateParams(w, []string{startStr, endStr, bucket, measurement, sendTopic}) {
+			return
+		}
 		// tag_key, tag_value 검사X
 
 		fmt.Println(
@@ -221,7 +225,7 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 		)
 
 		go func() {
-			total_msg_count, start_time_millis, end_time_millis, err := 
+			total_msg_count, start_time_millis, end_time_millis, err :=
 				processJobs(startStr, endStr, bucket, measurement, tagKey, tagValue, sendTopic)
 			if err != nil {
 				fmt.Println("Error on processJobs():", err)
@@ -230,16 +234,16 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 
 			// 응답 데이터 구성 및 JSON 직렬화
 			responseData := ResponseData{
-				QStartStr:     		startStr,
-				QEndStr:       		endStr,
-				BucketStr:     		bucket,
-				MeasurementStr:     measurement,
-				TagKeyStr:			tagKey,
-				TagValueStr: 		tagValue,
-				SendTopicStr:  		sendTopic,
-				TotalMessages: 		total_msg_count,
-				StartTime:     		start_time_millis, // 밀리초 단위로 변환
-				EndTime:       		end_time_millis,   // 밀리초 단위로 변환
+				QStartStr:      startStr,
+				QEndStr:        endStr,
+				BucketStr:      bucket,
+				MeasurementStr: measurement,
+				TagKeyStr:      tagKey,
+				TagValueStr:    tagValue,
+				SendTopicStr:   sendTopic,
+				TotalMessages:  total_msg_count,
+				StartTime:      start_time_millis, // 밀리초 단위로 변환
+				EndTime:        end_time_millis,   // 밀리초 단위로 변환
 			}
 
 			responseJSON, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(responseData)

@@ -40,7 +40,6 @@ func CheckStartEndRange(client *influxdb2.Client, bucket, measurement, tagKey, t
 	}
 	lastQuery += `|> last()`
 
-	
 	// Execute the first query
 	firstResults, err := queryAPI.Query(context.Background(), firstQuery)
 	if err != nil {
@@ -72,8 +71,8 @@ func CheckStartEndRange(client *influxdb2.Client, bucket, measurement, tagKey, t
 	return startTsStr, endTsStr
 }
 
-func ReadDataAndSendDirectly(client *influxdb2.Client, 
-	start, end, bucket,  measurement, tagKey, tagValue, topic string, 
+func ReadDataAndSendDirectly(client *influxdb2.Client,
+	start, end, bucket, measurement, tagKey, tagValue, topic string,
 	producer *kafka.Producer) (int, float64) {
 
 	org := "influxdata"
@@ -83,7 +82,7 @@ func ReadDataAndSendDirectly(client *influxdb2.Client,
 	|> range(start: %s, stop: %s)
 	|> filter(fn: (r) => r._measurement == "%s")
 	`, bucket, start, end, measurement)
-	
+
 	if tagKey != "" && tagValue != "" {
 		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`, tagKey, tagValue)
 	}
@@ -122,8 +121,7 @@ func ReadDataAndSendDirectly(client *influxdb2.Client,
 	return totalProcessed, recordsPerSecond
 }
 
-
-func getMeasurements(client *influxdb2.Client) ([]Measurement, error) {
+func getMeasurements(client *influxdb2.Client) ([]Dataset, error) {
 	org := "influxdata"
 
 	// Create the Bucket API client
@@ -137,7 +135,7 @@ func getMeasurements(client *influxdb2.Client) ([]Measurement, error) {
 
 	// Retrieve the list of measurements for each bucket
 	queryAPI := (*client).QueryAPI(org)
-	var measurements []Measurement
+	var dataset_list []Dataset
 
 	for _, bucket := range *buckets {
 		query := fmt.Sprintf(`import "influxdata/influxdb/v1" v1.measurements(bucket: "%s")`, bucket.Name)
@@ -145,19 +143,55 @@ func getMeasurements(client *influxdb2.Client) ([]Measurement, error) {
 		if err != nil {
 			return nil, err
 		}
-
 		for result.Next() {
-			measurements = append(measurements, Measurement{
-				BucketName:  bucket.Name,
-				Measurement: result.Record().ValueByKey("_value").(string),
-			})
-		}
-		if result.Err() != nil {
-			return nil, result.Err()
+			measurement := result.Record().ValueByKey("_value").(string)
+
+			tagKey_query := fmt.Sprintf(`
+			import "influxdata/influxdb/schema"
+			import "strings"
+			
+			schema.tagKeys(
+			bucket: "%s",
+			predicate: (r) => r._measurement == "%s",
+			start: 0  // 데이터 조회 시간 범위 설정
+			)
+			|> filter(fn: (r) =>
+				not strings.hasPrefix(v: r._value, prefix: "_")
+			)
+			`, bucket.Name, measurement)
+			result2, err2 := queryAPI.Query(context.Background(), tagKey_query)
+			if err2 != nil {
+				return nil, err2
+			}
+			for result2.Next() {
+				tagKey := result2.Record().ValueByKey("_value").(string)
+				tagValue_query := fmt.Sprintf(`import "influxdata/influxdb/schema"
+
+				schema.tagValues(
+				bucket: "%s",
+				predicate: (r) => r._measurement == "%s",
+				tag: "%s",
+				start: 0, 
+				)`, bucket.Name, measurement, tagKey)
+				result3, err3 := queryAPI.Query(context.Background(), tagValue_query)
+				if err3 != nil {
+					return nil, err3
+				}
+				for result3.Next() {
+					tagValue := result3.Record().ValueByKey("_value").(string)
+
+					dataset_list = append(dataset_list, Dataset{
+						BucketName:  bucket.Name,
+						Measurement: measurement,
+						TagKeyStr:   tagKey,
+						TagValueStr: tagValue,
+					})
+				}
+			}
 		}
 	}
 
-	return measurements, nil
+	return dataset_list, nil
 }
 
 func queryInfluxDB(client *influxdb2.Client, bucket, measurement, tagKey, tagValue string) (map[string]interface{}, error) {
