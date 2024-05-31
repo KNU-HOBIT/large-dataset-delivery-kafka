@@ -1,17 +1,21 @@
 package main
 
-import "time"
+import (
+	"strconv"
+	"strings"
+	"time"
+)
 
 func divideTime(startStr, endStr string) ([]struct{ Start, End string }, error) {
 	n := config.Jobs.DividedJobs
 	var result []struct{ Start, End string }
 
-	start, err := time.Parse(time.RFC3339, startStr)
+	start, err := parseTime(startStr)
 	if err != nil {
 		return nil, err
 	}
 
-	end, err := time.Parse(time.RFC3339, endStr)
+	end, err := parseTime(endStr)
 	if err != nil {
 		return nil, err
 	}
@@ -24,6 +28,21 @@ func divideTime(startStr, endStr string) ([]struct{ Start, End string }, error) 
 		result = append(result, struct{ Start, End string }{newStart.Format(time.RFC3339), newEnd.Format(time.RFC3339)})
 	}
 	return result, nil
+}
+
+func parseTime(timeStr string) (time.Time, error) {
+	if strings.Contains(timeStr, "T") {
+		// Assume RFC3339 format
+		return time.Parse(time.RFC3339, timeStr)
+	}
+
+	// Assume Unix timestamp in milliseconds
+	ms, err := strconv.ParseInt(timeStr, 10, 64)
+	if err != nil {
+		return time.Time{}, err
+	}
+
+	return time.Unix(0, ms*int64(time.Millisecond)), nil
 }
 
 // func divideByDays(startStr, endStr string) ([]struct{ Start, End string }, error) {

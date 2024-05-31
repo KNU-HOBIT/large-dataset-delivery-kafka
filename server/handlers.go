@@ -26,6 +26,7 @@ type ResponseData struct {
 	TotalMessages  int    `json:"totalMessages"`
 	StartTime      int64  `json:"startTimeMillis"`
 	EndTime        int64  `json:"endTimeMillis"`
+	// Schema         []SchemaField `json:"schema"`
 }
 
 type Dataset struct {
@@ -41,8 +42,73 @@ func handleRequests() {
 	http.HandleFunc("/all-of-data/", handleRequestB)
 	http.HandleFunc("/bucket-list/", handleRequestC)
 	http.HandleFunc("/bucket-detail/", handleRequestD)
+	http.HandleFunc("/check-elapsed/", handleRequestE)
 }
 
+// /check-elapsed/
+func handleRequestE(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		// 데이터 읽기
+		bucket := r.URL.Query().Get("bucket")
+		measurement := r.URL.Query().Get("measurement")
+		tagKey := r.URL.Query().Get("tag_key")
+		tagValue := r.URL.Query().Get("tag_value")
+
+		if !validateParams(w, []string{bucket, measurement}) {
+			return // Parameters missing, error response sent
+		}
+
+		fmt.Println(
+			"bucket:", bucket,
+			"measurement:", measurement,
+			"tagKey:", tagKey,
+			"tagValue:", tagValue,
+		)
+
+		var wg sync.WaitGroup
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+
+			client := influxdb2.NewClientWithOptions(url, token,
+				influxdb2.DefaultOptions().
+					SetPrecision(time.Millisecond).
+					SetHTTPRequestTimeout(900))
+			defer client.Close()
+
+			startTsStr, endTsStr := CheckStartEndRange(
+				&client, bucket, measurement, tagKey, tagValue)
+
+			fmt.Println("CheckStartEndRange : ", startTsStr, endTsStr)
+			// 응답 데이터 구성 및 JSON 직렬화
+			responseData := ResponseData{
+				QStartStr:      startTsStr,
+				QEndStr:        endTsStr,
+				BucketStr:      bucket,
+				MeasurementStr: measurement,
+				TagKeyStr:      tagKey,
+				TagValueStr:    tagValue,
+			}
+
+			responseJSON, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(responseData)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			// HTTP 응답 헤더 설정 및 JSON 응답 전송
+			w.Header().Set("Content-Type", "application/json")
+			w.Write(responseJSON)
+		}()
+		wg.Wait() // 모든 고루틴이 종료될 때까지 대기
+		return
+	default:
+		fmt.Fprintf(w, "unknown request")
+	}
+}
+
+// /bucket-detail/
 func handleRequestD(w http.ResponseWriter, r *http.Request) {
 	// bucket-detail
 	switch r.Method {
@@ -90,6 +156,7 @@ func handleRequestD(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// /bucket-list/
 func handleRequestC(w http.ResponseWriter, r *http.Request) {
 	// /bucket-list/
 	switch r.Method {
@@ -127,8 +194,9 @@ func handleRequestC(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// /all-of-data/
 func handleRequestB(w http.ResponseWriter, r *http.Request) {
-	// /all-of-data-by-eqpid/
+	// /all-of-data/
 	switch r.Method {
 	case "GET":
 		// 데이터 읽기
@@ -150,15 +218,20 @@ func handleRequestB(w http.ResponseWriter, r *http.Request) {
 			"sendTopic", sendTopic,
 		)
 
-		client := influxdb2.NewClientWithOptions(url, token,
-			influxdb2.DefaultOptions().
-				SetPrecision(time.Millisecond).
-				SetHTTPRequestTimeout(900))
-		defer client.Close()
-
-		startTsStr, endTsStr := CheckStartEndRange(&client, bucket, measurement, tagKey, tagValue)
-
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
+			client := influxdb2.NewClientWithOptions(url, token,
+				influxdb2.DefaultOptions().
+					SetPrecision(time.Millisecond).
+					SetHTTPRequestTimeout(900))
+			defer client.Close()
+
+			startTsStr, endTsStr := CheckStartEndRange(
+				&client, bucket, measurement, tagKey, tagValue)
+			fmt.Println("CheckStartEndRange : ", startTsStr, endTsStr)
 			total_msg_count, start_time_millis, end_time_millis, err :=
 				processJobs(startTsStr, endTsStr, bucket, measurement, tagKey, tagValue, sendTopic)
 			if err != nil {
@@ -167,7 +240,6 @@ func handleRequestB(w http.ResponseWriter, r *http.Request) {
 			}
 
 			// 응답 데이터 구성 및 JSON 직렬화
-			// 응답 데이터 구성
 			responseData := ResponseData{
 				QStartStr:      startTsStr,
 				QEndStr:        endTsStr,
@@ -179,6 +251,7 @@ func handleRequestB(w http.ResponseWriter, r *http.Request) {
 				TotalMessages:  total_msg_count,
 				StartTime:      start_time_millis, // 밀리초 단위로 변환
 				EndTime:        end_time_millis,   // 밀리초 단위로 변환
+				// Schema:         schema,
 			}
 
 			responseJSON, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(responseData)
@@ -191,12 +264,14 @@ func handleRequestB(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(responseJSON)
 		}()
+		wg.Wait() // 모든 고루틴이 종료될 때까지 대기
 		return
 	default:
 		fmt.Fprintf(w, "unknown request")
 	}
 }
 
+// /data-by-time-range/
 func handleRequestA(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -224,7 +299,22 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 			"sendTopic", sendTopic,
 		)
 
+		var wg sync.WaitGroup
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
+
+			client := influxdb2.NewClientWithOptions(url, token,
+				influxdb2.DefaultOptions().
+					SetPrecision(time.Millisecond).
+					SetHTTPRequestTimeout(900))
+			defer client.Close()
+
+			// schema, err := fetchSchema(&client, bucket, measurement, tagKey)
+			// if err != nil {
+			// 	log.Fatal(err)
+			// }
+
 			total_msg_count, start_time_millis, end_time_millis, err :=
 				processJobs(startStr, endStr, bucket, measurement, tagKey, tagValue, sendTopic)
 			if err != nil {
@@ -244,6 +334,7 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 				TotalMessages:  total_msg_count,
 				StartTime:      start_time_millis, // 밀리초 단위로 변환
 				EndTime:        end_time_millis,   // 밀리초 단위로 변환
+				// Schema:         schema,
 			}
 
 			responseJSON, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(responseData)
@@ -256,6 +347,7 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Write(responseJSON)
 		}()
+		wg.Wait() // 모든 고루틴이 종료될 때까지 대기
 		return
 	default:
 		fmt.Fprintf(w, "unknown request")

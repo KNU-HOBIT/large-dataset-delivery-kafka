@@ -158,6 +158,9 @@ func getMeasurements(client *influxdb2.Client) ([]Dataset, error) {
 			|> filter(fn: (r) =>
 				not strings.hasPrefix(v: r._value, prefix: "_")
 			)
+			|> filter(fn: (r) =>
+				not strings.hasPrefix(v: r._value, prefix: "tag_key")
+			)
 			`, bucket.Name, measurement)
 			result2, err2 := queryAPI.Query(context.Background(), tagKey_query)
 			if err2 != nil {
@@ -309,3 +312,29 @@ func buildQuery(bucket, measurement, tagKey, tagValue, aggregation string) strin
 
 	return query
 }
+
+// func fetchSchema(client *influxdb2.Client, bucket, measurement, tagKey string) ([]SchemaField, error) {
+// 	org := "influxdata"
+// 	queryAPI := (*client).QueryAPI(org)
+
+// 	schema_query := fmt.Sprintf(`from(bucket: "%s")
+// 	|> range(start: 0)
+// 	|> filter(fn: (r) => r["_measurement"] == "%s")
+// 	|> filter(fn: (r) => r["tag_key"] == "%s")
+// 	|> last()`, bucket, measurement, tagKey)
+
+// 	schema_result, err := queryAPI.Query(context.Background(), schema_query)
+// 	if err != nil {
+// 		return nil, err
+// 	}
+
+// 	var schemaObj Schema
+// 	if schema_result.Next() {
+// 		schemaData := schema_result.Record().ValueByKey("_value").(string)
+// 		err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(schemaData), &schemaObj)
+// 		if err != nil {
+// 			return nil, err
+// 		}
+// 	}
+// 	return schemaObj.Schema, nil
+// }
