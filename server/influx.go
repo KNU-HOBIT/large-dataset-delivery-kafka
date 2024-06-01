@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"sort"
 
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	jsoniter "github.com/json-iterator/go"
+	"github.com/noFlowWater/large-dataset-delivery-kafka/server/examplepb"
+	"google.golang.org/protobuf/proto"
 )
 
 func CheckStartEndRange(client *influxdb2.Client, bucket, measurement, tagKey, tagValue string) (startTsStr, endTsStr string) {
@@ -197,6 +200,72 @@ func getMeasurements(client *influxdb2.Client) ([]Dataset, error) {
 	return dataset_list, nil
 }
 
+// decodeStartValue decodes startValue based on bucket and measurement
+func decodeValue(bucket, measurement, startValue string) (map[string]interface{}, error) {
+	if bucket == "mqtt_iot_sensor" && measurement == "transport" {
+		// Base64 decode
+		decoded, err := base64.StdEncoding.DecodeString(startValue)
+		if err != nil {
+			return nil, fmt.Errorf("failed to decode base64: %v", err)
+		}
+
+		// Protobuf decode
+		var transport examplepb.Transport
+		if err := proto.Unmarshal(decoded, &transport); err != nil {
+			return nil, fmt.Errorf("failed to decode protobuf: %v", err)
+		}
+
+		// Convert Protobuf to map
+		return transportToMap(&transport), nil
+	}
+
+	// JSON decode
+	var jsonData map[string]interface{}
+	if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(startValue), &jsonData); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal JSON: %v", err)
+	}
+
+	return jsonData, nil
+}
+
+// transportToMap converts Protobuf Transport message to map
+func transportToMap(transport *examplepb.Transport) map[string]interface{} {
+	return map[string]interface{}{
+		"index":          transport.Index,
+		"blk_no":         transport.BlkNo,
+		"press3":         transport.Press3,
+		"calc_press2":    transport.CalcPress2,
+		"press4":         transport.Press4,
+		"calc_press1":    transport.CalcPress1,
+		"calc_press4":    transport.CalcPress4,
+		"calc_press3":    transport.CalcPress3,
+		"bf_gps_lon":     transport.BfGpsLon,
+		"gps_lat":        transport.GpsLat,
+		"speed":          transport.Speed,
+		"in_dt":          transport.InDt,
+		"move_time":      transport.MoveTime,
+		"dvc_id":         transport.DvcId,
+		"dsme_lat":       transport.DsmeLat,
+		"press1":         transport.Press1,
+		"press2":         transport.Press2,
+		"work_status":    transport.WorkStatus,
+		"timestamp":      transport.Timestamp,
+		"is_adjust":      transport.IsAdjust,
+		"move_distance":  transport.MoveDistance,
+		"weight":         transport.Weight,
+		"dsme_lon":       transport.DsmeLon,
+		"in_user":        transport.InUser,
+		"eqp_id":         transport.EqpId,
+		"blk_get_seq_id": transport.BlkGetSeqId,
+		"lot_no":         transport.LotNo,
+		"proj_no":        transport.ProjNo,
+		"gps_lon":        transport.GpsLon,
+		"seq_id":         transport.SeqId,
+		"bf_gps_lat":     transport.BfGpsLat,
+		"blk_dvc_id":     transport.BlkDvcId,
+	}
+}
+
 func queryInfluxDB(client *influxdb2.Client, bucket, measurement, tagKey, tagValue string) (map[string]interface{}, error) {
 	org := "influxdata"
 	queryAPI := (*client).QueryAPI(org)
@@ -219,16 +288,21 @@ func queryInfluxDB(client *influxdb2.Client, bucket, measurement, tagKey, tagVal
 		startTime = startResult.Record().Time()
 		startValue = startResult.Record().ValueByKey("_value").(string)
 
-		var jsonData map[string]interface{}
-		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(startValue), &jsonData); err != nil {
+		// Decode startValue
+		dataElement, err := decodeValue(bucket, measurement, startValue)
+		if err != nil {
+			fmt.Println(err)
 			return nil, err
 		}
 
-		for key := range jsonData {
+		// Extract columns from dataElement and sort them
+		for key := range dataElement {
 			columns = append(columns, key)
 		}
 		sort.Strings(columns) // Ensure columns are sorted
-		data = append(data, jsonData)
+
+		// Append dataElement to data slice
+		data = append(data, dataElement)
 	}
 	if startResult.Err() != nil {
 		return nil, startResult.Err()
@@ -246,11 +320,14 @@ func queryInfluxDB(client *influxdb2.Client, bucket, measurement, tagKey, tagVal
 		endTime = endResult.Record().Time()
 		endValue = endResult.Record().ValueByKey("_value").(string)
 
-		var jsonData map[string]interface{}
-		if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(endValue), &jsonData); err != nil {
+		// Decode startValue
+		dataElement, err := decodeValue(bucket, measurement, endValue)
+		if err != nil {
+			fmt.Println(err)
 			return nil, err
 		}
-		data = append(data, jsonData)
+		// Append dataElement to data slice
+		data = append(data, dataElement)
 	}
 	if endResult.Err() != nil {
 		return nil, endResult.Err()

@@ -129,7 +129,7 @@ func handleRequestD(w http.ResponseWriter, r *http.Request) {
 			"Bucket:", Bucket,
 			"Measurement:", Measurement,
 		)
-
+		// tagKey: building_number tagValue: 1 Bucket: electric Measurement: electric_dataset
 		client := influxdb2.NewClientWithOptions(url, token,
 			influxdb2.DefaultOptions().
 				SetPrecision(time.Millisecond).
@@ -138,6 +138,7 @@ func handleRequestD(w http.ResponseWriter, r *http.Request) {
 
 		responseData, err := queryInfluxDB(&client, Bucket, Measurement, tagKey, tagValue)
 		if err != nil {
+
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
