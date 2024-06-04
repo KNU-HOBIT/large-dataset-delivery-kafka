@@ -2,6 +2,10 @@ syntax = "proto2";
 
 option go_package = "../server/examplepb"; // Replace with your actual package path
 
+// 빌드
+// protoc -I=/home/dom/hobit/transport/ywjang --python_out=/home/dom/hobit/transport/ywjang /home/dom/hobit/transport/ywjang/transport.proto
+// protoc --include_imports --descriptor_set_out=hobit.desc ./hobit.proto
+
 message Transport {
   required int32 index = 1;
   required string blk_no = 2;
@@ -35,4 +39,18 @@ message Transport {
   required int32 seq_id = 30;
   required double bf_gps_lat = 32;
   required string blk_dvc_id = 33;
+}
+
+message Electric {
+  required string building_number = 1;
+  required float temperature = 2;
+  required float rainfall = 3;
+  required float windspeed = 4;
+  required float humidity = 5;
+  required float power_consumption = 6;
+  required float month = 7;
+  required float day = 8;
+  required float time = 9;
+  required float total_area = 10;
+  required float building_type = 11;
 }

@@ -105,7 +105,7 @@ func ReadDataAndSendDirectly(client *influxdb2.Client,
 		if v, ok := record.Values()["_value"].(string); ok {
 			producer.Produce(&kafka.Message{
 				TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
-				Value:          []byte(v),
+				Value:          []byte(decodeBase64(v)),
 			}, nil)
 			totalProcessed++
 		}
@@ -200,32 +200,83 @@ func getMeasurements(client *influxdb2.Client) ([]Dataset, error) {
 	return dataset_list, nil
 }
 
-// decodeStartValue decodes startValue based on bucket and measurement
-func decodeValue(bucket, measurement, startValue string) (map[string]interface{}, error) {
-	if bucket == "mqtt_iot_sensor" && measurement == "transport" {
-		// Base64 decode
-		decoded, err := base64.StdEncoding.DecodeString(startValue)
-		if err != nil {
-			return nil, fmt.Errorf("failed to decode base64: %v", err)
-		}
+type decodeFunc func(string) (map[string]interface{}, error)
 
-		// Protobuf decode
-		var transport examplepb.Transport
-		if err := proto.Unmarshal(decoded, &transport); err != nil {
-			return nil, fmt.Errorf("failed to decode protobuf: %v", err)
-		}
+func decodeBase64(encoded string) []byte {
+	decoded, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		fmt.Println(err)
+	}
+	return decoded
+}
 
-		// Convert Protobuf to map
-		return transportToMap(&transport), nil
+func unmarshalProtobuf[T proto.Message](data []byte, message T) error {
+	if err := proto.Unmarshal(data, message); err != nil {
+		return fmt.Errorf("failed to unmarshal protobuf: %v", err)
+	}
+	return nil
+}
+
+func convertToMap[T proto.Message](message T, converter func(T) map[string]interface{}) map[string]interface{} {
+	return converter(message)
+}
+
+func decodeBase64_unmarshalProtobuf_convertToMap[T proto.Message](
+	startValue string, message T, converter func(T) map[string]interface{}) (
+	map[string]interface{}, error) {
+
+	// Base64 디코드
+	decoded := decodeBase64(startValue)
+
+	// 프로토버프 언마샬
+	if err := unmarshalProtobuf(decoded, message); err != nil {
+		return nil, err
 	}
 
-	// JSON decode
+	// 메시지를 맵으로 변환
+	resultMap := convertToMap(message, converter)
+	return resultMap, nil
+}
+
+var decoderMap = map[string]decodeFunc{
+	"mqtt_iot_sensor:transport": func(startValue string) (map[string]interface{}, error) {
+		var transport examplepb.Transport
+		return decodeBase64_unmarshalProtobuf_convertToMap(startValue, &transport, transportToMap)
+	},
+	"electric:electric_dataset": func(startValue string) (map[string]interface{}, error) {
+		var electric examplepb.Electric
+		return decodeBase64_unmarshalProtobuf_convertToMap(startValue, &electric, electricToMap)
+	},
+}
+
+func decodeValue(bucket, measurement, startValue string) (map[string]interface{}, error) {
+	key := fmt.Sprintf("%s:%s", bucket, measurement)
+	if decodeFunc, exists := decoderMap[key]; exists {
+		return decodeFunc(startValue)
+	}
+
 	var jsonData map[string]interface{}
 	if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(startValue), &jsonData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON: %v", err)
 	}
 
 	return jsonData, nil
+}
+
+func electricToMap(electric *examplepb.Electric) map[string]interface{} {
+	return map[string]interface{}{
+		"building_number":   electric.BuildingNumber,
+		"temperature":       electric.Temperature,
+		"rainfall":          electric.Rainfall,
+		"windspeed":         electric.Windspeed,
+		"humidity":          electric.Humidity,
+		"power_consumption": electric.PowerConsumption,
+		"month":             electric.Month,
+		"day":               electric.Day,
+		"time":              electric.Time,
+		"total_area":        electric.TotalArea,
+		"building_type":     electric.BuildingType,
+	}
 }
 
 // transportToMap converts Protobuf Transport message to map
