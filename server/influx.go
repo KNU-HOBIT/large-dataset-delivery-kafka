@@ -16,19 +16,21 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func CheckStartEndRange(client *influxdb2.Client, bucket, measurement, tagKey, tagValue string) (startTsStr, endTsStr string) {
+func CheckStartEndRange(client *influxdb2.Client, params InfluxQueryParams) (TimeRangeStr, error) {
 	org := "influxdata"
 	queryAPI := (*client).QueryAPI(org)
 
 	baseQuery := fmt.Sprintf(`
 	from(bucket: "%s")
 		|> range(start: 0)
-		|> filter(fn: (r) => r._measurement == "%s")`, bucket, measurement)
+		|> filter(fn: (r) => r._measurement == "%s")`,
+		params.bucket, params.measurement)
 
 	// Define the query for getting the first timestamp
 	firstQuery := baseQuery
-	if tagKey != "" && tagValue != "" {
-		firstQuery += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`, tagKey, tagValue)
+	if params.tagKey != "" && params.tagValue != "" {
+		firstQuery += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`,
+			params.tagKey, params.tagValue)
 	} else {
 		firstQuery += `|> group()`
 	}
@@ -36,92 +38,166 @@ func CheckStartEndRange(client *influxdb2.Client, bucket, measurement, tagKey, t
 
 	// Define the query for getting the last timestamp
 	lastQuery := baseQuery
-	if tagKey != "" && tagValue != "" {
-		lastQuery += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`, tagKey, tagValue)
+	if params.tagKey != "" && params.tagValue != "" {
+		lastQuery += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`,
+			params.tagKey, params.tagValue)
 	} else {
 		lastQuery += `|> group()`
 	}
 	lastQuery += `|> last()`
 
+	var startTsStr, endTsStr string
+
 	// Execute the first query
 	firstResults, err := queryAPI.Query(context.Background(), firstQuery)
 	if err != nil {
-		log.Fatalf("error executing first query: %v", err)
-		return
+		return TimeRangeStr{}, fmt.Errorf("error executing first query: %v", err)
 	}
 	if firstResults.Next() {
 		firstTime := firstResults.Record().Time()
 		startTsStr = firstTime.Format("2006-01-02T15:04:05.000Z")
 	}
 	if err := firstResults.Err(); err != nil {
-		log.Fatalf("error reading first query results: %v", err)
+		return TimeRangeStr{}, fmt.Errorf("error reading first query results: %v", err)
 	}
 
 	// Execute the last query
 	lastResults, err := queryAPI.Query(context.Background(), lastQuery)
 	if err != nil {
-		log.Fatalf("error executing last query: %v", err)
-		return
+		return TimeRangeStr{}, fmt.Errorf("error executing last query: %v", err)
 	}
 	if lastResults.Next() {
 		lastTime := lastResults.Record().Time()
 		endTsStr = lastTime.Format("2006-01-02T15:04:05.000Z")
 	}
 	if err := lastResults.Err(); err != nil {
-		log.Fatalf("error reading last query results: %v", err)
+		return TimeRangeStr{}, fmt.Errorf("error reading last query results: %v", err)
 	}
 
-	return startTsStr, endTsStr
+	return TimeRangeStr{startStr: startTsStr, endStr: endTsStr}, nil
 }
 
-func ReadDataAndSendDirectly(client *influxdb2.Client,
-	start, end, bucket, measurement, tagKey, tagValue, topic string,
-	producer *kafka.Producer) (int, float64) {
-
+func ReadDataAndSendDirectly(client *influxdb2.Client, job *Job, producer *kafka.Producer) (int, float64) {
 	org := "influxdata"
 	queryAPI := (*client).QueryAPI(org)
 	query := fmt.Sprintf(`
 	from(bucket: "%s")
 	|> range(start: %s, stop: %s)
 	|> filter(fn: (r) => r._measurement == "%s")
-	`, bucket, start, end, measurement)
+	`, job.q_params.bucket, job.startStr, job.endStr, job.q_params.measurement)
 
-	if tagKey != "" && tagValue != "" {
-		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`, tagKey, tagValue)
+	if job.q_params.tagKey != "" && job.q_params.tagValue != "" {
+		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`,
+			job.q_params.tagKey, job.q_params.tagValue)
 	}
 
 	startTime := time.Now()
 	results, err := queryAPI.Query(context.Background(), query)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("queryAPI:", err)
 	}
 	elapsed := time.Since(startTime)
 	fmt.Printf("client: %x Query took %s\n", client, elapsed)
 
 	totalProcessed := 0
-	// loopStartTime := time.Now() // 루프 시작 시간
 	for results.Next() {
 		record := results.Record()
 		if v, ok := record.Values()["_value"].(string); ok {
+			partition := kafka.PartitionAny
+			if job.sendPartition >= 0 {
+				partition = int32(job.sendPartition)
+			}
+
 			producer.Produce(&kafka.Message{
-				TopicPartition: kafka.TopicPartition{Topic: &topic, Partition: kafka.PartitionAny},
-				Value:          []byte(decodeBase64(v)),
+				TopicPartition: kafka.TopicPartition{
+					Topic:     &job.sendTopic,
+					Partition: partition,
+				},
+				Value: []byte(decodeBase64(v)),
 			}, nil)
 			totalProcessed++
 		}
 	}
-	// loopElapsed := time.Since(loopStartTime) // 루프 처리 시간
 	if err := results.Err(); err != nil {
 		log.Fatal(err)
 	}
 
-	// 초당 처리 레코드 수 계산
 	recordsPerSecond := 0.0
-	// if loopElapsed.Seconds() > 0 {
-	// 	recordsPerSecond = float64(totalProcessed) / loopElapsed.Seconds()
-	// }
-
 	return totalProcessed, recordsPerSecond
+}
+
+func getTotalRecordCount(client *influxdb2.Client, ts TimeRangeStr, q_params InfluxQueryParams) (int64, error) {
+	org := "influxdata"
+	queryAPI := (*client).QueryAPI(org)
+	query := fmt.Sprintf(`
+        from(bucket:"%s")
+        |> range(start: %s, stop: %s)
+        |> filter(fn: (r) => r._measurement == "%s")`,
+		q_params.bucket, ts.startStr, ts.endStr, q_params.measurement)
+
+	if q_params.tagKey != "" && q_params.tagValue != "" {
+		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`,
+			q_params.tagKey, q_params.tagValue)
+	} else {
+		query += `|> group()`
+	}
+
+	query += `|> count()`
+
+	result, err := queryAPI.Query(context.Background(), query)
+	if err != nil {
+		return 0, err
+	}
+
+	var totalCount int64
+	for result.Next() {
+		totalCount = result.Record().Value().(int64)
+	}
+
+	return totalCount, nil
+}
+
+func calculateEndTimes(client *influxdb2.Client, startStr string, recordsPerJob int64, q_params InfluxQueryParams) ([]string, error) {
+	org := "influxdata"
+	queryAPI := (*client).QueryAPI(org)
+
+	query := fmt.Sprintf(`
+        from(bucket:"%s")
+        |> range(start: %s)
+        |> filter(fn: (r) => r._measurement == "%s")`,
+		q_params.bucket, startStr, q_params.measurement)
+
+	if q_params.tagKey != "" && q_params.tagValue != "" {
+		query += fmt.Sprintf(`
+        |> filter(fn: (r) => r["%s"] == "%s")`,
+			q_params.tagKey, q_params.tagValue)
+	} else {
+		query += `|> group()`
+	}
+
+	query += fmt.Sprintf(`
+        |> sort(columns: ["_time"], desc: false)
+        |> map(fn: (r) => ({r with index: 1}))
+        |> cumulativeSum(columns: ["index"])
+        |> filter(fn: (r) => r.index %% %d == 0)
+        |> keep(columns: ["_time"])`, recordsPerJob)
+
+	result, err := queryAPI.Query(context.Background(), query)
+	if err != nil {
+		return nil, err
+	}
+
+	var endTimes []string
+	for result.Next() {
+		endTimes = append(endTimes,
+			increaseOneNanosecond(result.Record().Time()).Format(time.RFC3339Nano))
+	}
+
+	if err := result.Err(); err != nil {
+		return nil, err
+	}
+
+	return endTimes, nil
 }
 
 func getMeasurements(client *influxdb2.Client) ([]Dataset, error) {

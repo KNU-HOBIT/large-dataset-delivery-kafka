@@ -90,22 +90,9 @@ func (w *Worker) Start() {
 				var flushStartTime time.Time         // flush 작업 시작 시간
 				var startTime time.Time = time.Now() // 작업 시작 시간 기록
 				fmt.Printf("worker%d: job start about: %s~%s\n", w.ID, job.startStr, job.endStr)
-				// records := ReadData(&client, job.startStr, job.endStr, job.eqpId)
-				// fmt.Printf("worker %d read records count: %d\n", w.ID, len(records))
-				// 데이터 읽기 및 Kafka로 직접 전송
-				var totalProcessed int = 0
-				totalProcessed, recordsPerSecond := ReadDataAndSendDirectly(
-					&client, job.startStr, job.endStr,job.bucket, job.measurement, 
-					job.tagKey, job.tagValue, job.sendTopic, producer)
-				// // `records` 리스트가 비어있지 않은 경우, 첫 번째 요소 출력
-				// if len(records) > 0 {
-				// 	fmt.Printf("첫 번째 record 요소: %+v\n", records[0])
-				// } else {
-				// 	fmt.Println("record 리스트가 비어있습니다.")
-				// }
 
-				// records를 bundleSize개 단위로 묶습니다.
-				// groupedRecords := GroupRecords(records, bundleSize)
+				var totalProcessed int = 0
+				totalProcessed, recordsPerSecond := ReadDataAndSendDirectly(&client, &job, producer)
 
 				// Ensure the delivery report handler has finished
 				unflushed := producer.Flush(15 * 1000) // 15 seconds
@@ -126,8 +113,8 @@ func (w *Worker) Start() {
 				}
 				fmt.Printf("worker %d produced records count: %d job completed in %v\n", w.ID, totalProcessed, endTime.Sub(startTime))
 				fmt.Printf("worker %d processed Records/second: %.2f\n", w.ID, recordsPerSecond)
-				*job.messagesCh <- totalProcessed
-				(*job.wg).Done() // 작업 처리 완료를 알림
+				job.messagesCh <- totalProcessed
+				job.wg.Done() // 작업 처리 완료를 알림
 
 			case <-w.quit:
 				// 워커 종료

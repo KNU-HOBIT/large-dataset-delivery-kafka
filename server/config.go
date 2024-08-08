@@ -22,7 +22,7 @@ type Config struct {
 	Jobs struct {
 		WorkerNum        int `json:"workerNum"`
 		JobQueueCapacity int `json:"jobQueueCapacity"`
-		DividedJobs      int `json:"dividedJobs"`
+		JobsPerPartition int `json:"jobsPerPartition"`
 	} `json:"jobs"`
 }
 
