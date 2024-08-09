@@ -7,11 +7,12 @@ import (
 )
 
 type JobList struct {
-	q_params   InfluxQueryParams
-	sendTopic  string
-	messagesCh chan int
-	wg         *sync.WaitGroup
-	jobs       []*Job
+	q_params       InfluxQueryParams
+	sendTopic      string
+	partitionCount int
+	messagesCh     chan int
+	wg             *sync.WaitGroup
+	jobs           []*Job
 }
 
 type Job struct {

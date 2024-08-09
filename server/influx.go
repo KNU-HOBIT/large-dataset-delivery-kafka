@@ -103,9 +103,11 @@ func ReadDataAndSendDirectly(client *influxdb2.Client, job *Job, producer *kafka
 	for results.Next() {
 		record := results.Record()
 		if v, ok := record.Values()["_value"].(string); ok {
-			partition := kafka.PartitionAny
+			var partition int32 = kafka.PartitionAny
 			if job.sendPartition >= 0 {
 				partition = int32(job.sendPartition)
+			} else {
+				partition = int32(totalProcessed % job.partitionCount)
 			}
 
 			producer.Produce(&kafka.Message{

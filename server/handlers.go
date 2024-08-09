@@ -495,7 +495,7 @@ func createJobDetailsAndList(client *influxdb2.Client, timeRange TimeRangeStr, t
 }
 
 func setupKafkaProducerAndMetadata(sendTopic string) (*kafka.Producer, map[int32]int64, error) {
-	producer, err := createKafkaProducer(config.Kafka.BootstrapServers)
+	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": config.Kafka.BootstrapServers})
 	if err != nil {
 		return nil, nil, err
 	}
@@ -537,11 +537,12 @@ func createJobList(ts TimeRangeStr, endTimes []string, partitionCount, jobCount 
 	wg := new(sync.WaitGroup)
 
 	jobList := &JobList{
-		q_params:   q_params,
-		sendTopic:  sendTopic,
-		messagesCh: messagesCh,
-		wg:         wg,
-		jobs:       []*Job{},
+		q_params:       q_params,
+		sendTopic:      sendTopic,
+		partitionCount: partitionCount,
+		messagesCh:     messagesCh,
+		wg:             wg,
+		jobs:           []*Job{},
 	}
 
 	currentStart := ts.startStr
@@ -564,10 +565,6 @@ func createJobList(ts TimeRangeStr, endTimes []string, partitionCount, jobCount 
 		jobList.jobs = append(jobList.jobs, job)
 	}
 	return jobList
-}
-
-func createKafkaProducer(bootstrapServers string) (*kafka.Producer, error) {
-	return kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": bootstrapServers})
 }
 
 func createOffsetsData(startOffsets, endOffsets map[int32]int64) []string {
