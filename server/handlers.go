@@ -22,7 +22,15 @@ type TimeRangeStr struct {
 	endStr   string
 }
 
+type KafkaEndPoint struct {
+	bootstrapServers string
+	topic            string
+}
+
 type InfluxQueryParams struct {
+	url         string
+	token       string
+	org         string
 	bucket      string
 	measurement string
 	tagKey      string
@@ -43,17 +51,18 @@ type JobParameters struct {
 }
 
 type ResponseData struct {
-	QStartStr      string   `json:"queryStartStr"`
-	QEndStr        string   `json:"queryEndStr"`
-	BucketStr      string   `json:"bucketStr"`
-	MeasurementStr string   `json:"measurementStr"`
-	TagKeyStr      string   `json:"tagKeyStr"`
-	TagValueStr    string   `json:"tagValueStr"`
-	SendTopicStr   string   `json:"sendTopicStr"`
-	TotalMessages  int      `json:"totalMessages"`
-	StartTime      int64    `json:"startTimeMillis"`
-	EndTime        int64    `json:"endTimeMillis"`
-	OffsetsData    []string `json:"offsetsData"`
+	QStartStr       string   `json:"queryStartStr"`
+	QEndStr         string   `json:"queryEndStr"`
+	BucketStr       string   `json:"bucketStr"`
+	MeasurementStr  string   `json:"measurementStr"`
+	TagKeyStr       string   `json:"tagKeyStr"`
+	TagValueStr     string   `json:"tagValueStr"`
+	KafkaBrokersStr string   `json:"kafkaBrokersStr"`
+	SendTopicStr    string   `json:"sendTopicStr"`
+	TotalMessages   int      `json:"totalMessages"`
+	StartTime       int64    `json:"startTimeMillis"`
+	EndTime         int64    `json:"endTimeMillis"`
+	OffsetsData     []string `json:"offsetsData"`
 }
 
 type Dataset struct {
@@ -237,14 +246,18 @@ func handleRequestB(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		// 데이터 읽기
+		influxURL := r.URL.Query().Get("influx_url")
+		influxToken := r.URL.Query().Get("influx_token")
+		influxOrg := r.URL.Query().Get("influx_org")
 		bucket := r.URL.Query().Get("bucket")
 		measurement := r.URL.Query().Get("measurement")
 		tagKey := r.URL.Query().Get("tag_key")
 		tagValue := r.URL.Query().Get("tag_value")
+		kafkaBrokers := r.URL.Query().Get("kafka_brokers")
 		sendTopic := r.URL.Query().Get("send_topic")
 		dropLastParam := r.URL.Query().Get("drop_last")
 
-		if !validateParams(w, []string{bucket, measurement, sendTopic}) {
+		if !validateParams(w, []string{influxURL, influxToken, influxOrg, bucket, measurement, kafkaBrokers, sendTopic}) {
 			return // Parameters missing, error response sent
 		}
 
@@ -254,14 +267,25 @@ func handleRequestB(w http.ResponseWriter, r *http.Request) {
 		}
 
 		fmt.Println(
+			"influx_url:", influxURL,
+			"influx_org:", influxOrg,
 			"bucket:", bucket,
 			"measurement:", measurement,
 			"tagKey:", tagKey,
 			"tagValue:", tagValue,
-			"sendTopic", sendTopic,
+			"kafkaBrokers:", kafkaBrokers,
+			"sendTopic:", sendTopic,
 		)
 
+		k_endpoint := KafkaEndPoint{
+			bootstrapServers: kafkaBrokers,
+			topic:            sendTopic,
+		}
+
 		q_params := InfluxQueryParams{
+			url:         influxURL,
+			token:       influxToken,
+			org:         influxOrg,
 			bucket:      bucket,
 			measurement: measurement,
 			tagKey:      tagKey,
@@ -273,7 +297,7 @@ func handleRequestB(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer wg.Done()
 
-			client := influxdb2.NewClientWithOptions(url, token,
+			client := influxdb2.NewClientWithOptions(influxURL, influxToken,
 				influxdb2.DefaultOptions().
 					SetPrecision(time.Millisecond).
 					SetHTTPRequestTimeout(900))
@@ -285,7 +309,7 @@ func handleRequestB(w http.ResponseWriter, r *http.Request) {
 			}
 
 			total_msg_count, start_time_millis, end_time_millis, offsetsData, err :=
-				processJobs(&client, timeRange, q_params, sendTopic, dropLast)
+				processJobs(&client, timeRange, q_params, k_endpoint, dropLast)
 			if err != nil {
 				fmt.Println("Error parsing time:", err)
 				return
@@ -328,27 +352,34 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		// 데이터 읽기
+		influxURL := r.URL.Query().Get("influx_url")
+		influxToken := r.URL.Query().Get("influx_token")
+		influxOrg := r.URL.Query().Get("influx_org")
 		startStr := r.URL.Query().Get("start")
 		endStr := r.URL.Query().Get("end")
 		bucket := r.URL.Query().Get("bucket")
 		measurement := r.URL.Query().Get("measurement")
 		tagKey := r.URL.Query().Get("tag_key")
 		tagValue := r.URL.Query().Get("tag_value")
+		kafkaBrokers := r.URL.Query().Get("kafka_brokers")
 		sendTopic := r.URL.Query().Get("send_topic")
 		dropLastParam := r.URL.Query().Get("drop_last")
 
-		if !validateParams(w, []string{startStr, endStr, bucket, measurement, sendTopic}) {
+		if !validateParams(w, []string{influxURL, influxToken, influxOrg, startStr, endStr, bucket, measurement, kafkaBrokers, sendTopic}) {
 			return
 		}
 		// tag_key, tag_value 검사X
 
 		fmt.Println(
+			"influx_url:", influxURL,
+			"influx_org:", influxOrg,
 			"startStr:", startStr,
 			"endStr:", endStr,
 			"bucket:", bucket,
 			"measurement:", measurement,
 			"tagKey:", tagKey,
 			"tagValue:", tagValue,
+			"kafkaBrokers", kafkaBrokers,
 			"sendTopic", sendTopic,
 			"drop_last", dropLastParam,
 		)
@@ -358,7 +389,15 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 			dropLast = false
 		}
 
+		k_endpoint := KafkaEndPoint{
+			bootstrapServers: kafkaBrokers,
+			topic:            sendTopic,
+		}
+
 		q_params := InfluxQueryParams{
+			url:         influxURL,
+			token:       influxToken,
+			org:         influxOrg,
 			bucket:      bucket,
 			measurement: measurement,
 			tagKey:      tagKey,
@@ -375,14 +414,14 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 		go func() {
 			defer wg.Done()
 
-			client := influxdb2.NewClientWithOptions(url, token,
+			client := influxdb2.NewClientWithOptions(influxURL, influxToken,
 				influxdb2.DefaultOptions().
 					SetPrecision(time.Millisecond).
 					SetHTTPRequestTimeout(900))
 			defer client.Close()
 
 			total_msg_count, start_time_millis, end_time_millis, offsetsData, err :=
-				processJobs(&client, t_range, q_params, sendTopic, dropLast)
+				processJobs(&client, t_range, q_params, k_endpoint, dropLast)
 			if err != nil {
 				fmt.Println("Error on processJobs():", err)
 				return
@@ -390,17 +429,18 @@ func handleRequestA(w http.ResponseWriter, r *http.Request) {
 
 			// 응답 데이터 구성 및 JSON 직렬화
 			responseData := ResponseData{
-				QStartStr:      startStr,
-				QEndStr:        endStr,
-				BucketStr:      bucket,
-				MeasurementStr: measurement,
-				TagKeyStr:      tagKey,
-				TagValueStr:    tagValue,
-				SendTopicStr:   sendTopic,
-				TotalMessages:  total_msg_count,
-				StartTime:      start_time_millis, // 밀리초 단위로 변환
-				EndTime:        end_time_millis,   // 밀리초 단위로 변환
-				OffsetsData:    offsetsData,
+				QStartStr:       startStr,
+				QEndStr:         endStr,
+				BucketStr:       bucket,
+				MeasurementStr:  measurement,
+				TagKeyStr:       tagKey,
+				TagValueStr:     tagValue,
+				KafkaBrokersStr: k_endpoint.bootstrapServers,
+				SendTopicStr:    k_endpoint.topic,
+				TotalMessages:   total_msg_count,
+				StartTime:       start_time_millis, // 밀리초 단위로 변환
+				EndTime:         end_time_millis,   // 밀리초 단위로 변환
+				OffsetsData:     offsetsData,
 			}
 
 			responseJSON, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(responseData)
@@ -440,28 +480,32 @@ func validateParams(w http.ResponseWriter, values []string) bool {
 	}
 	return true
 }
-func processJobs(client *influxdb2.Client, timeRange TimeRangeStr, q_params InfluxQueryParams, sendTopic string, dropLast bool) (int, int64, int64, []string, error) {
-	partitionCount, totalRecords, err := calculatePartitionAndRecords(client, timeRange, q_params, sendTopic)
+func processJobs(client *influxdb2.Client, timeRange TimeRangeStr, q_params InfluxQueryParams, endpoint KafkaEndPoint, dropLast bool) (int, int64, int64, []string, error) {
+
+	partitionCount, totalRecords, err := calculatePartitionAndRecords(client, timeRange, q_params, endpoint)
 	if err != nil {
 		return 0, 0, 0, []string{}, err
 	}
 
-	jobList, err := createJobDetailsAndList(client, timeRange, totalRecords, partitionCount, q_params, sendTopic, dropLast)
+	jobList, err := createJobDetailsAndList(client, timeRange, totalRecords, partitionCount, q_params, dropLast)
 	if err != nil {
 		return 0, 0, 0, []string{}, err
 	}
 
-	producer, startOffsets, err := setupKafkaProducerAndMetadata(sendTopic)
+	dispatcher := NewDispatcher(calculateWorkerNum(partitionCount), q_params, endpoint) // workerNum을 계산하는 함수를 호출하여 workerNum 설정
+	dispatcher.Run()
+
+	producer, startOffsets, err := setupKafkaProducerAndMetadata(endpoint)
 	if err != nil {
 		return 0, 0, 0, []string{}, err
 	}
 	defer producer.Close()
 
-	return executeAndProcessJobs(jobList, sendTopic, producer, startOffsets)
+	return executeAndProcessJobs(jobList, endpoint.topic, producer, startOffsets, dispatcher)
 }
 
-func calculatePartitionAndRecords(client *influxdb2.Client, timeRange TimeRangeStr, q_params InfluxQueryParams, sendTopic string) (int, int64, error) {
-	partitionCount, err := getPartitionCount(sendTopic)
+func calculatePartitionAndRecords(client *influxdb2.Client, timeRange TimeRangeStr, q_params InfluxQueryParams, endpoint KafkaEndPoint) (int, int64, error) {
+	partitionCount, err := getPartitionCount(endpoint)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -480,7 +524,7 @@ func calculatePartitionAndRecords(client *influxdb2.Client, timeRange TimeRangeS
 	return partitionCount, totalRecords, nil
 }
 
-func createJobDetailsAndList(client *influxdb2.Client, timeRange TimeRangeStr, totalRecords int64, partitionCount int, q_params InfluxQueryParams, sendTopic string, dropLast bool) (*JobList, error) {
+func createJobDetailsAndList(client *influxdb2.Client, timeRange TimeRangeStr, totalRecords int64, partitionCount int, q_params InfluxQueryParams, dropLast bool) (*JobList, error) {
 	jobCount, recordsPerJob, remainingRecords := calculateJobDetails(totalRecords, partitionCount)
 	fmt.Printf("Job Count: %d, Records per Job: %d, Remaining Records: %d\n", jobCount, recordsPerJob, remainingRecords)
 
@@ -489,18 +533,18 @@ func createJobDetailsAndList(client *influxdb2.Client, timeRange TimeRangeStr, t
 		return nil, err
 	}
 
-	jobList := createJobList(timeRange, endTimes, partitionCount, jobCount, q_params, sendTopic, remainingRecords, dropLast)
+	jobList := createJobList(timeRange, endTimes, partitionCount, jobCount, remainingRecords, dropLast)
 	printJobList(jobList)
 	return jobList, nil
 }
 
-func setupKafkaProducerAndMetadata(sendTopic string) (*kafka.Producer, map[int32]int64, error) {
-	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": config.Kafka.BootstrapServers})
+func setupKafkaProducerAndMetadata(endpoint KafkaEndPoint) (*kafka.Producer, map[int32]int64, error) {
+	producer, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": endpoint.bootstrapServers})
 	if err != nil {
 		return nil, nil, err
 	}
 
-	startOffsets, err := loadKafkaMetadata(producer, sendTopic)
+	startOffsets, err := loadKafkaMetadata(producer, endpoint.topic)
 	if err != nil {
 		producer.Close()
 		return nil, nil, err
@@ -509,8 +553,10 @@ func setupKafkaProducerAndMetadata(sendTopic string) (*kafka.Producer, map[int32
 	return producer, startOffsets, nil
 }
 
-func executeAndProcessJobs(jobList *JobList, sendTopic string, producer *kafka.Producer, startOffsets map[int32]int64) (int, int64, int64, []string, error) {
-	totalMsgCount, elapsed, startTime, endTime, err := executeJobs(jobList)
+func executeAndProcessJobs(jobList *JobList, sendTopic string, producer *kafka.Producer, startOffsets map[int32]int64, dispatcher *Dispatcher) (int, int64, int64, []string, error) {
+	defer dispatcher.StopAllWorkers()
+
+	totalMsgCount, elapsed, startTime, endTime, err := executeJobs(jobList, dispatcher)
 	if err != nil {
 		return 0, 0, 0, []string{}, err
 	}
@@ -525,10 +571,11 @@ func executeAndProcessJobs(jobList *JobList, sendTopic string, producer *kafka.P
 	fmt.Println(offsetsData)
 
 	fmt.Printf("Total processed messages: %d, Total took: %s\n", totalMsgCount, elapsed)
+
 	return totalMsgCount, startTime.UnixNano() / 1e6, endTime.UnixNano() / 1e6, offsetsData, nil
 }
 
-func createJobList(ts TimeRangeStr, endTimes []string, partitionCount, jobCount int, q_params InfluxQueryParams, sendTopic string, remainingRecords int64, dropLast bool) *JobList {
+func createJobList(ts TimeRangeStr, endTimes []string, partitionCount, jobCount int, remainingRecords int64, dropLast bool) *JobList {
 	messagesChSize := jobCount
 	if !dropLast {
 		messagesChSize = jobCount + 1
@@ -537,8 +584,6 @@ func createJobList(ts TimeRangeStr, endTimes []string, partitionCount, jobCount 
 	wg := new(sync.WaitGroup)
 
 	jobList := &JobList{
-		q_params:       q_params,
-		sendTopic:      sendTopic,
 		partitionCount: partitionCount,
 		messagesCh:     messagesCh,
 		wg:             wg,
@@ -571,7 +616,7 @@ func createOffsetsData(startOffsets, endOffsets map[int32]int64) []string {
 	var offsetsData []string
 	for tpID, startOffset := range startOffsets {
 		if endOffset, exists := endOffsets[tpID]; exists {
-			offsetString := fmt.Sprintf("%d:%d:%d", tpID, startOffset, endOffset)
+			offsetString := fmt.Sprintf("%d:%d:%d", tpID, startOffset, endOffset-1)
 			offsetsData = append(offsetsData, offsetString)
 		}
 	}

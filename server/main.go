@@ -20,9 +20,6 @@ var config, _ = LoadConfig("config.json")
 var url string = config.InfluxDB.URL
 var token string = config.InfluxDB.Token
 
-// 쿼리 range를 n개로 divide. -> n개의 Job을 비동기적으로 Worker 쓰레드로 분배.
-var JobQueue = make(chan Job, config.Jobs.JobQueueCapacity)
-
 func main() {
 
 	example()
@@ -34,8 +31,8 @@ func main() {
 	// 라우터 설정
 	handleRequests()
 
-	dispatcher := NewDispatcher(config.Jobs.WorkerNum) // 11개의 워커로 구성된 워커 풀 생성
-	dispatcher.Run()
+	// dispatcher := NewDispatcher(config.Jobs.WorkerNum) // 11개의 워커로 구성된 워커 풀 생성
+	// dispatcher.Run()
 
 	// 별도의 고루틴에서 HTTP 서버 시작
 	go func() {
@@ -50,7 +47,7 @@ func main() {
 
 	// 시그널 대기
 	<-signals
-	dispatcher.StopAllWorkers()
+	// dispatcher.StopAllWorkers()
 
 	// 서버 종료를 위한 새로운 컨텍스트 생성
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

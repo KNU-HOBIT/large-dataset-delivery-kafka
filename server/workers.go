@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
@@ -9,14 +11,16 @@ import (
 )
 
 type Worker struct {
+	Dispatcher
 	ID         int
 	WorkerPool chan chan Job
 	JobChannel chan Job
 	quit       chan bool
 }
 
-func NewWorker(workerPool chan chan Job, id int) Worker {
+func NewWorker(workerPool chan chan Job, id int, d *Dispatcher) Worker {
 	return Worker{
+		Dispatcher: *d,
 		ID:         id,
 		WorkerPool: workerPool,
 		JobChannel: make(chan Job),
@@ -40,6 +44,7 @@ func (w *Worker) handleDeliveryReports(producer *kafka.Producer) {
 
 		case <-w.quit:
 			fmt.Println("Stopping handleDeliveryReports goroutine...")
+			w.Stop()
 			return // 고루틴 종료
 		}
 	}
@@ -50,14 +55,14 @@ func (w *Worker) Start() {
 	go func() {
 		fmt.Printf("worker %d start\n", w.ID)
 		//INIT influx client
-		client := influxdb2.NewClientWithOptions(url, token,
+		client := influxdb2.NewClientWithOptions(w.db_config.url, w.db_config.token,
 			influxdb2.DefaultOptions().
 				SetPrecision(time.Millisecond).
 				SetHTTPRequestTimeout(900))
 		//INIT kafka producer
 		producer, err := kafka.NewProducer(
 			&kafka.ConfigMap{
-				"bootstrap.servers":  config.Kafka.BootstrapServers,
+				"bootstrap.servers":  w.kafka_config.bootstrapServers,
 				"acks":               config.Kafka.Acks,
 				"enable.idempotence": config.Kafka.EnableIdempotence,
 				"compression.type":   config.Kafka.CompressionType,
@@ -92,7 +97,7 @@ func (w *Worker) Start() {
 				fmt.Printf("worker%d: job start about: %s~%s\n", w.ID, job.startStr, job.endStr)
 
 				var totalProcessed int = 0
-				totalProcessed, recordsPerSecond := ReadDataAndSendDirectly(&client, &job, producer)
+				totalProcessed = w.ReadDataAndSendDirectly(&client, &job, producer)
 
 				// Ensure the delivery report handler has finished
 				unflushed := producer.Flush(15 * 1000) // 15 seconds
@@ -112,18 +117,66 @@ func (w *Worker) Start() {
 					endTime = time.Now() // flush 진입이 없었을 경우, 현재 시간을 종료 시간으로 기록
 				}
 				fmt.Printf("worker %d produced records count: %d job completed in %v\n", w.ID, totalProcessed, endTime.Sub(startTime))
-				fmt.Printf("worker %d processed Records/second: %.2f\n", w.ID, recordsPerSecond)
 				job.messagesCh <- totalProcessed
 				job.wg.Done() // 작업 처리 완료를 알림
 
 			case <-w.quit:
 				// 워커 종료
-				client.Close()
+				producer.Flush(15 * 1000)
 				fmt.Printf("worker %d end\n", w.ID)
 				return
 			}
 		}
 	}()
+}
+
+func (w *Worker) ReadDataAndSendDirectly(client *influxdb2.Client, job *Job, producer *kafka.Producer) int {
+	queryAPI := (*client).QueryAPI(w.db_config.org)
+	query := fmt.Sprintf(`
+	from(bucket: "%s")
+	|> range(start: %s, stop: %s)
+	|> filter(fn: (r) => r._measurement == "%s")
+	`, w.db_config.bucket, job.startStr, job.endStr, w.db_config.measurement)
+
+	if w.db_config.tagKey != "" && w.db_config.tagValue != "" {
+		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`,
+			w.db_config.tagKey, w.db_config.tagValue)
+	}
+
+	startTime := time.Now()
+	results, err := queryAPI.Query(context.Background(), query)
+	if err != nil {
+		log.Fatal("queryAPI:", err)
+	}
+	elapsed := time.Since(startTime)
+	fmt.Printf("client: %x Query took %s\n", client, elapsed)
+
+	totalProcessed := 0
+	for results.Next() {
+		record := results.Record()
+		if v, ok := record.Values()["_value"].(string); ok {
+			var partition int32 = kafka.PartitionAny
+			if job.sendPartition >= 0 {
+				partition = int32(job.sendPartition)
+			} else {
+				partition = int32(totalProcessed % job.partitionCount)
+			}
+
+			producer.Produce(&kafka.Message{
+				TopicPartition: kafka.TopicPartition{
+					Topic:     &w.kafka_config.topic,
+					Partition: partition,
+				},
+				Value: []byte(decodeBase64(v)),
+			}, nil)
+			totalProcessed++
+		}
+	}
+	if err := results.Err(); err != nil {
+		log.Fatal(err)
+	}
+
+	return totalProcessed
 }
 
 func (w *Worker) Stop() {

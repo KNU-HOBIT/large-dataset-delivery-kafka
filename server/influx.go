@@ -6,10 +6,8 @@ import (
 	"sort"
 
 	"fmt"
-	"log"
 	"time"
 
-	"github.com/confluentinc/confluent-kafka-go/kafka"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	jsoniter "github.com/json-iterator/go"
 	"github.com/noFlowWater/large-dataset-delivery-kafka/server/examplepb"
@@ -75,57 +73,6 @@ func CheckStartEndRange(client *influxdb2.Client, params InfluxQueryParams) (Tim
 	}
 
 	return TimeRangeStr{startStr: startTsStr, endStr: endTsStr}, nil
-}
-
-func ReadDataAndSendDirectly(client *influxdb2.Client, job *Job, producer *kafka.Producer) (int, float64) {
-	org := "influxdata"
-	queryAPI := (*client).QueryAPI(org)
-	query := fmt.Sprintf(`
-	from(bucket: "%s")
-	|> range(start: %s, stop: %s)
-	|> filter(fn: (r) => r._measurement == "%s")
-	`, job.q_params.bucket, job.startStr, job.endStr, job.q_params.measurement)
-
-	if job.q_params.tagKey != "" && job.q_params.tagValue != "" {
-		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`,
-			job.q_params.tagKey, job.q_params.tagValue)
-	}
-
-	startTime := time.Now()
-	results, err := queryAPI.Query(context.Background(), query)
-	if err != nil {
-		log.Fatal("queryAPI:", err)
-	}
-	elapsed := time.Since(startTime)
-	fmt.Printf("client: %x Query took %s\n", client, elapsed)
-
-	totalProcessed := 0
-	for results.Next() {
-		record := results.Record()
-		if v, ok := record.Values()["_value"].(string); ok {
-			var partition int32 = kafka.PartitionAny
-			if job.sendPartition >= 0 {
-				partition = int32(job.sendPartition)
-			} else {
-				partition = int32(totalProcessed % job.partitionCount)
-			}
-
-			producer.Produce(&kafka.Message{
-				TopicPartition: kafka.TopicPartition{
-					Topic:     &job.sendTopic,
-					Partition: partition,
-				},
-				Value: []byte(decodeBase64(v)),
-			}, nil)
-			totalProcessed++
-		}
-	}
-	if err := results.Err(); err != nil {
-		log.Fatal(err)
-	}
-
-	recordsPerSecond := 0.0
-	return totalProcessed, recordsPerSecond
 }
 
 func getTotalRecordCount(client *influxdb2.Client, ts TimeRangeStr, q_params InfluxQueryParams) (int64, error) {
