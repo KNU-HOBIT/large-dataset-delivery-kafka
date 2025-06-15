@@ -14,10 +14,14 @@ type TimeRangeStr struct {
 
 // Dataset represents a dataset structure
 type Dataset struct {
-	BucketName  string `json:"bucket_name"`
-	Measurement string `json:"measurement"`
-	TagKeyStr   string `json:"tagKeyStr"`
-	TagValueStr string `json:"tagValueStr"`
+	DatabaseName       string                 `json:"database_name"` // InfluxDB: bucket, MongoDB: database
+	TableName          string                 `json:"table_name"`    // InfluxDB: measurement, MongoDB: collection
+	TagKeyStr          string                 `json:"tagKeyStr"`
+	TagValueStr        string                 `json:"tagValueStr"`
+	DatasetName        string                 `json:"dataset_name"`
+	DatasetDescription string                 `json:"dataset_description"`
+	DatasetType        string                 `json:"dataset_type"`
+	DatasetParams      map[string]interface{} `json:"dataset_params"`
 }
 
 // QueryParams holds unified parameters for database queries

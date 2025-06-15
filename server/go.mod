@@ -7,7 +7,6 @@ require (
 	github.com/influxdata/influxdb-client-go/v2 v2.13.0
 	github.com/json-iterator/go v1.1.12
 	go.mongodb.org/mongo-driver v1.17.4
-	google.golang.org/protobuf v1.34.1
 )
 
 require (

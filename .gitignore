@@ -20,7 +20,73 @@
 # Go workspace file
 go.work
 
+# Client configuration
 client/config.yaml
 
+# Server configuration files (환경별 설정)
 server/config.json
 server/asdf.json
+
+# Development and build artifacts
+server/tmp/
+server/build/
+server/logs/
+server/.air.toml
+
+# Environment files
+server/.env
+server/.env.*
+!server/.env.example
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Docker volumes and data
+docker-data/
+data/
+
+# Kubernetes secrets and configs
+server/deployments/k8s/secrets/
+server/deployments/k8s/configmaps/
+
+# Certificate files
+*.pem
+*.key
+*.crt
+*.p12
+
+# Backup files
+*.backup
+*.bak
+
+# Coverage reports
+coverage.out
+coverage.html
+coverage.xml
+
+# Test results
+test-results/
+junit.xml
+
+# Profiling data
+*.prof
+*.pprof
+
+# Air build errors log
+build-errors.log
+
+# Go module cache (if using local cache)
+go.sum.backup

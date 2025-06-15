@@ -52,12 +52,6 @@ type Config struct {
 		} `json:"defaultSort"`
 		SystemDatabases []string `json:"systemDatabases"`
 	} `json:"api"`
-	Example struct {
-		PersonID    int    `json:"personId"`
-		PersonName  string `json:"personName"`
-		PersonEmail string `json:"personEmail"`
-		PhoneNumber string `json:"phoneNumber"`
-	} `json:"example"`
 }
 
 func LoadConfig(filename string) (Config, error) {

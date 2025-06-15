@@ -1,0 +1,118 @@
+version: '3.8'
+
+services:
+  # 메인 애플리케이션 서버
+  app:
+    build:
+      context: ../..
+      dockerfile: deployments/docker/Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - CONFIG_PATH=/configs/development.yaml
+      - LOG_LEVEL=debug
+      - KAFKA_BROKERS=kafka:9092
+      - INFLUX_URL=http://influxdb:8086
+      - MONGO_URL=mongodb://mongodb:27017
+    depends_on:
+      - kafka
+      - influxdb
+      - mongodb
+    networks:
+      - app-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "/server", "healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Zookeeper for Kafka
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    networks:
+      - app-network
+
+  # Apache Kafka
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: true
+    networks:
+      - app-network
+
+  # InfluxDB
+  influxdb:
+    image: influxdb:2.7-alpine
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=password123
+      - DOCKER_INFLUXDB_INIT_ORG=myorg
+      - DOCKER_INFLUXDB_INIT_BUCKET=mybucket
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=mytoken
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - app-network
+
+  # MongoDB
+  mongodb:
+    image: mongo:7.0
+    ports:
+      - "27017:27017"
+    environment:
+      - MONGO_INITDB_ROOT_USERNAME=admin
+      - MONGO_INITDB_ROOT_PASSWORD=password123
+    volumes:
+      - mongodb-data:/data/db
+    networks:
+      - app-network
+
+  # Prometheus for monitoring
+  prometheus:
+    image: prom/prometheus:v2.45.0
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    networks:
+      - app-network
+
+  # Grafana for visualization
+  grafana:
+    image: grafana/grafana:10.0.0
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - app-network
+
+volumes:
+  influxdb-data:
+    driver: local
+  mongodb-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  app-network:
+    driver: bridge 

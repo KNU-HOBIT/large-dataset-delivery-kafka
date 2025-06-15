@@ -1,0 +1,89 @@
+server:
+  port: ":3001"
+  shutdownTimeoutSeconds: 10
+  readTimeout: 30s
+  writeTimeout: 30s
+  idleTimeout: 120s
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+kafka:
+  bootstrapServers: "${KAFKA_BROKERS}"
+  acks: "all"
+  enableIdempotence: "true"
+  compressionType: "lz4" 
+  metadataTimeoutMs: 5000
+  watermarkTimeoutMs: 1000
+  flushTimeoutMs: 30000
+  retries: 5
+  batchSize: 32768
+  lingerMs: 10
+
+jobs:
+  workerNum: 12
+  jobQueueCapacity: 1000
+  dividedJobs: 100
+  jobsPerPartition: 8
+  maxRetries: 5
+  retryDelay: "10s"
+
+database:
+  mongodb:
+    maxPoolSize: 200
+    maxConnIdleTimeSeconds: 60
+    connectTimeoutSeconds: 15
+    socketTimeoutSeconds: 60
+    serverSelectionTimeoutSeconds: 10
+    contextTimeoutSeconds: 60
+    queryTimeoutSeconds: 30
+  influxdb:
+    httpRequestTimeoutSeconds: 1800
+    precisionUnit: "ms"
+    queryTimeoutSeconds: 30
+    maxRetries: 5
+    retryInterval: "2s"
+
+formats:
+  dateTimeFormat: "2006-01-02T15:04:05.000Z"
+  rfc3339NanoFormat: "2006-01-02T15:04:05.000000000Z07:00"
+
+api:
+  defaultSort:
+    mongodb: "_id"
+    influxdb: "_time"
+  systemDatabases: ["admin", "local", "config"]
+  rateLimit:
+    enabled: true
+    rps: 1000
+    burst: 2000
+
+security:
+  cors:
+    enabled: true
+    allowOrigins: ["${ALLOWED_ORIGINS}"]
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"]
+    allowHeaders: ["Content-Type", "Authorization"]
+  auth:
+    enabled: true
+    jwtSecret: "${JWT_SECRET}"
+    tokenExpiry: "24h"
+
+monitoring:
+  metrics:
+    enabled: true
+    port: ":9090"
+    path: "/metrics"
+  healthCheck:
+    enabled: true
+    path: "/health"
+  profiling:
+    enabled: false  # 프로덕션에서는 비활성화
+
+example:
+  personId: 1234
+  personName: "John Doe"
+  personEmail: "jdoe@example.com"
+  phoneNumber: "555-4321" 

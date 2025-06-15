@@ -11,8 +11,6 @@ import (
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 	jsoniter "github.com/json-iterator/go"
-	"github.com/noFlowWater/large-dataset-delivery-kafka/server/examplepb"
-	"google.golang.org/protobuf/proto"
 )
 
 // InfluxDBClient implements DatabaseClient for InfluxDB
@@ -199,54 +197,35 @@ func (i *InfluxDBClient) GetDatasets() ([]Dataset, error) {
 		if err != nil {
 			return nil, err
 		}
+
+		var measurements []string
 		for result.Next() {
-			measurement := result.Record().ValueByKey("_value").(string)
+			measurements = append(measurements, result.Record().Value().(string))
+		}
 
-			tagKey_query := fmt.Sprintf(`
-			import "influxdata/influxdb/schema"
-			import "strings"
-			
-			schema.tagKeys(
-			bucket: "%s",
-			predicate: (r) => r._measurement == "%s",
-			start: 0
-			)
-			|> filter(fn: (r) =>
-				not strings.hasPrefix(v: r._value, prefix: "_")
-			)
-			|> filter(fn: (r) =>
-				not strings.hasPrefix(v: r._value, prefix: "tag_key")
-			)
-			`, bucket.Name, measurement)
-			result2, err2 := queryAPI.Query(context.Background(), tagKey_query)
-			if err2 != nil {
-				return nil, err2
+		if err := result.Err(); err != nil {
+			return nil, err
+		}
+
+		// Sort measurements alphabetically
+		sort.Strings(measurements)
+
+		// Create a dataset for each measurement
+		for _, measurement := range measurements {
+			dataset := Dataset{
+				DatabaseName:       bucket.Name, // InfluxDB에서는 bucket이 database 역할
+				TableName:          measurement, // measurement가 table 역할
+				TagKeyStr:          "",
+				TagValueStr:        "",
+				DatasetName:        fmt.Sprintf("%s:%s", bucket.Name, measurement),
+				DatasetDescription: fmt.Sprintf("Measurement '%s' in bucket '%s'", measurement, bucket.Name),
+				DatasetType:        "InfluxDB",
+				DatasetParams: map[string]interface{}{
+					"bucket":      bucket.Name,
+					"measurement": measurement,
+				},
 			}
-			for result2.Next() {
-				tagKey := result2.Record().ValueByKey("_value").(string)
-				tagValue_query := fmt.Sprintf(`import "influxdata/influxdb/schema"
-
-				schema.tagValues(
-				bucket: "%s",
-				predicate: (r) => r._measurement == "%s",
-				tag: "%s",
-				start: 0, 
-				)`, bucket.Name, measurement, tagKey)
-				result3, err3 := queryAPI.Query(context.Background(), tagValue_query)
-				if err3 != nil {
-					return nil, err3
-				}
-				for result3.Next() {
-					tagValue := result3.Record().ValueByKey("_value").(string)
-
-					dataset_list = append(dataset_list, Dataset{
-						BucketName:  bucket.Name,
-						Measurement: measurement,
-						TagKeyStr:   tagKey,
-						TagValueStr: tagValue,
-					})
-				}
-			}
+			dataset_list = append(dataset_list, dataset)
 		}
 	}
 
@@ -258,105 +237,31 @@ func (i *InfluxDBClient) QueryDatabase(params QueryParams) (map[string]interface
 	queryAPI := (*i.client).QueryAPI(i.org)
 	influxParams := params.GetInfluxParams()
 
-	startQuery := i.buildQuery(influxParams.Bucket, influxParams.Measurement, influxParams.TagKey, influxParams.TagValue, "first")
-	endQuery := i.buildQuery(influxParams.Bucket, influxParams.Measurement, influxParams.TagKey, influxParams.TagValue, "last")
-	countQuery := i.buildQuery(influxParams.Bucket, influxParams.Measurement, influxParams.TagKey, influxParams.TagValue, "count")
+	// Build the query
+	query := i.buildQuery(influxParams.Bucket, influxParams.Measurement, influxParams.TagKey, influxParams.TagValue, "count")
 
-	// Execute start query
-	startResult, err := queryAPI.Query(context.Background(), startQuery)
+	// Execute the query
+	result, err := queryAPI.Query(context.Background(), query)
 	if err != nil {
 		return nil, err
 	}
 
-	var startTime time.Time
-	var startValue string
-	var columns []string
-	var data []map[string]interface{}
-	if startResult.Next() {
-		startTime = startResult.Record().Time()
-		startValue = startResult.Record().ValueByKey("_value").(string)
-
-		// Decode startValue
-		dataElement, err := decodeValue(influxParams.Bucket, influxParams.Measurement, startValue)
-		if err != nil {
-			fmt.Println(err)
-			return nil, err
+	// Process the result
+	var resultData map[string]interface{}
+	for result.Next() {
+		record := result.Record()
+		resultData = map[string]interface{}{
+			"time":  record.Time(),
+			"value": record.Value(),
 		}
-
-		// Extract columns from dataElement and sort them
-		for key := range dataElement {
-			columns = append(columns, key)
-		}
-		sort.Strings(columns)
-
-		// Append dataElement to data slice
-		data = append(data, dataElement)
-	}
-	if startResult.Err() != nil {
-		return nil, startResult.Err()
+		break // We only need the first (and only) result
 	}
 
-	// Execute end query
-	endResult, err := queryAPI.Query(context.Background(), endQuery)
-	if err != nil {
+	if err := result.Err(); err != nil {
 		return nil, err
 	}
 
-	var endTime time.Time
-	var endValue string
-	if endResult.Next() {
-		endTime = endResult.Record().Time()
-		endValue = endResult.Record().ValueByKey("_value").(string)
-
-		// Decode endValue
-		dataElement, err := decodeValue(influxParams.Bucket, influxParams.Measurement, endValue)
-		if err != nil {
-			fmt.Println(err)
-			return nil, err
-		}
-		// Append dataElement to data slice
-		data = append(data, dataElement)
-	}
-	if endResult.Err() != nil {
-		return nil, endResult.Err()
-	}
-
-	// Execute count query
-	countResult, err := queryAPI.Query(context.Background(), countQuery)
-	if err != nil {
-		return nil, err
-	}
-
-	var count int64
-	if countResult.Next() {
-		count = countResult.Record().Value().(int64)
-	}
-	if countResult.Err() != nil {
-		return nil, countResult.Err()
-	}
-
-	// Extract only the values for the data field
-	dataValues := make([][]interface{}, len(data))
-	for i, record := range data {
-		values := make([]interface{}, len(columns))
-		for j, column := range columns {
-			values[j] = record[column]
-		}
-		dataValues[i] = values
-	}
-
-	// Prepare the response data
-	responseData := map[string]interface{}{
-		"start":       startTime.Format(time.RFC3339Nano),
-		"end":         endTime.Format(time.RFC3339Nano),
-		"bucket":      influxParams.Bucket,
-		"measurement": influxParams.Measurement,
-		"count":       count,
-		"columns":     columns,
-		"data":        dataValues,
-	}
-
-	return responseData, nil
+	return resultData, nil
 }
 
 // ReadDataAndSend implements DatabaseClient interface for InfluxDB
@@ -365,15 +270,19 @@ func (i *InfluxDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecuti
 	influxParams := params.GetInfluxParams()
 
 	query := fmt.Sprintf(`
-	from(bucket: "%s")
-	|> range(start: %s, stop: %s)
-	|> filter(fn: (r) => r._measurement == "%s")
-	`, influxParams.Bucket, execInfo.StartStr, execInfo.EndStr, influxParams.Measurement)
+        from(bucket:"%s")
+        |> range(start: %s, stop: %s)
+        |> filter(fn: (r) => r._measurement == "%s")`,
+		influxParams.Bucket, execInfo.StartStr, execInfo.EndStr, influxParams.Measurement)
 
 	if influxParams.TagKey != "" && influxParams.TagValue != "" {
-		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`,
+		query += fmt.Sprintf(`
+        |> filter(fn: (r) => r["%s"] == "%s")`,
 			influxParams.TagKey, influxParams.TagValue)
 	}
+
+	query += `
+        |> sort(columns: ["_time"], desc: false)`
 
 	results, err := queryAPI.Query(context.Background(), query)
 	if err != nil {
@@ -383,38 +292,42 @@ func (i *InfluxDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecuti
 	totalProcessed := 0
 	for results.Next() {
 		record := results.Record()
-		if v, ok := record.Values()["_value"].(string); ok {
-			// 데이터 처리
-			dataMap := map[string]interface{}{
-				"value": decodeBase64(v),
-				"time":  record.Time(),
-			}
 
-			// JSON으로 변환
-			jsonData, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(dataMap)
-			if err != nil {
-				log.Printf("Error marshaling record: %v", err)
-				continue
-			}
+		// 레코드를 JSON으로 변환
+		recordMap := make(map[string]interface{})
+		recordMap["_time"] = record.Time()
+		recordMap["_measurement"] = record.Measurement()
 
-			// 파티션 결정
-			var partition int32 = kafka.PartitionAny
-			if execInfo.SendPartition >= 0 {
-				partition = int32(execInfo.SendPartition)
-			} else {
-				partition = int32(totalProcessed % partitionCount)
+		// 모든 필드와 태그 추가
+		for key, value := range record.Values() {
+			if key != "_time" && key != "_measurement" {
+				recordMap[key] = value
 			}
-
-			// Kafka로 메시지 전송
-			producer.Produce(&kafka.Message{
-				TopicPartition: kafka.TopicPartition{
-					Topic:     &topic,
-					Partition: partition,
-				},
-				Value: jsonData,
-			}, nil)
-			totalProcessed++
 		}
+
+		jsonData, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(recordMap)
+		if err != nil {
+			log.Printf("Error marshaling record to JSON: %v", err)
+			continue
+		}
+
+		// 파티션 결정
+		var partition int32 = kafka.PartitionAny
+		if execInfo.SendPartition >= 0 {
+			partition = int32(execInfo.SendPartition)
+		} else {
+			partition = int32(totalProcessed % partitionCount)
+		}
+
+		// Kafka로 메시지 전송
+		producer.Produce(&kafka.Message{
+			TopicPartition: kafka.TopicPartition{
+				Topic:     &topic,
+				Partition: partition,
+			},
+			Value: jsonData,
+		}, nil)
+		totalProcessed++
 	}
 
 	if err := results.Err(); err != nil {
@@ -460,112 +373,13 @@ func decodeBase64(encoded string) []byte {
 }
 
 func decodeValue(bucket, measurement, startValue string) (map[string]interface{}, error) {
-	key := fmt.Sprintf("%s:%s", bucket, measurement)
-	if decodeFunc, exists := decoderMap[key]; exists {
-		return decodeFunc(startValue)
-	}
-
+	// Protobuf 디코더 제거 - 이제 JSON만 처리
 	var jsonData map[string]interface{}
 	if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(startValue), &jsonData); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal JSON: %v", err)
 	}
 
 	return jsonData, nil
-}
-
-// Add decoder functions and maps
-type decodeFunc func(string) (map[string]interface{}, error)
-
-func unmarshalProtobuf[T proto.Message](data []byte, message T) error {
-	if err := proto.Unmarshal(data, message); err != nil {
-		return fmt.Errorf("failed to unmarshal protobuf: %v", err)
-	}
-	return nil
-}
-
-func convertToMap[T proto.Message](message T, converter func(T) map[string]interface{}) map[string]interface{} {
-	return converter(message)
-}
-
-func decodeBase64_unmarshalProtobuf_convertToMap[T proto.Message](
-	startValue string, message T, converter func(T) map[string]interface{}) (
-	map[string]interface{}, error) {
-
-	// Base64 디코드
-	decoded := decodeBase64(startValue)
-
-	// 프로토버프 언마샬
-	if err := unmarshalProtobuf(decoded, message); err != nil {
-		return nil, err
-	}
-
-	// 메시지를 맵으로 변환
-	resultMap := convertToMap(message, converter)
-	return resultMap, nil
-}
-
-var decoderMap = map[string]decodeFunc{
-	"mqtt_iot_sensor:transport": func(startValue string) (map[string]interface{}, error) {
-		var transport examplepb.Transport
-		return decodeBase64_unmarshalProtobuf_convertToMap(startValue, &transport, transportToMap)
-	},
-	"electric:electric_dataset": func(startValue string) (map[string]interface{}, error) {
-		var electric examplepb.Electric
-		return decodeBase64_unmarshalProtobuf_convertToMap(startValue, &electric, electricToMap)
-	},
-}
-
-func electricToMap(electric *examplepb.Electric) map[string]interface{} {
-	return map[string]interface{}{
-		"building_number":   electric.BuildingNumber,
-		"temperature":       electric.Temperature,
-		"rainfall":          electric.Rainfall,
-		"windspeed":         electric.Windspeed,
-		"humidity":          electric.Humidity,
-		"power_consumption": electric.PowerConsumption,
-		"month":             electric.Month,
-		"day":               electric.Day,
-		"time":              electric.Time,
-		"total_area":        electric.TotalArea,
-		"building_type":     electric.BuildingType,
-	}
-}
-
-func transportToMap(transport *examplepb.Transport) map[string]interface{} {
-	return map[string]interface{}{
-		"index":          transport.Index,
-		"blk_no":         transport.BlkNo,
-		"press3":         transport.Press3,
-		"calc_press2":    transport.CalcPress2,
-		"press4":         transport.Press4,
-		"calc_press1":    transport.CalcPress1,
-		"calc_press4":    transport.CalcPress4,
-		"calc_press3":    transport.CalcPress3,
-		"bf_gps_lon":     transport.BfGpsLon,
-		"gps_lat":        transport.GpsLat,
-		"speed":          transport.Speed,
-		"in_dt":          transport.InDt,
-		"move_time":      transport.MoveTime,
-		"dvc_id":         transport.DvcId,
-		"dsme_lat":       transport.DsmeLat,
-		"press1":         transport.Press1,
-		"press2":         transport.Press2,
-		"work_status":    transport.WorkStatus,
-		"timestamp":      transport.Timestamp,
-		"is_adjust":      transport.IsAdjust,
-		"move_distance":  transport.MoveDistance,
-		"weight":         transport.Weight,
-		"dsme_lon":       transport.DsmeLon,
-		"in_user":        transport.InUser,
-		"eqp_id":         transport.EqpId,
-		"blk_get_seq_id": transport.BlkGetSeqId,
-		"lot_no":         transport.LotNo,
-		"proj_no":        transport.ProjNo,
-		"gps_lon":        transport.GpsLon,
-		"seq_id":         transport.SeqId,
-		"bf_gps_lat":     transport.BfGpsLat,
-		"blk_dvc_id":     transport.BlkDvcId,
-	}
 }
 
 func (i *InfluxDBClient) CalculateJobExecutions(totalRecords int64, jobCount int, params QueryParams) ([]JobExecutionInfo, error) {

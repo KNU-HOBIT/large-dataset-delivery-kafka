@@ -1,11 +1,11 @@
-# Large Dataset Delivery Kafka
+# 🚀 Large Dataset Delivery with Kafka
 
-[![Go](https://img.shields.io/badge/Go-1.19+-00ADD8?style=flat&logo=go)](https://golang.org/)
-[![Kafka](https://img.shields.io/badge/Apache%20Kafka-231F20?style=flat&logo=apache-kafka)](https://kafka.apache.org/)
-[![InfluxDB](https://img.shields.io/badge/InfluxDB-22ADF6?style=flat&logo=influxdb)](https://www.influxdata.com/)
-[![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=flat&logo=mongodb)](https://www.mongodb.com/)
+[![Go Version](https://img.shields.io/badge/Go-1.19+-00ADD8?style=for-the-badge&logo=go)](https://golang.org/)
+[![Kafka](https://img.shields.io/badge/Apache%20Kafka-231F20?style=for-the-badge&logo=apache-kafka)](https://kafka.apache.org/)
+[![InfluxDB](https://img.shields.io/badge/InfluxDB-22ADF6?style=for-the-badge&logo=influxdb)](https://www.influxdata.com/)
+[![MongoDB](https://img.shields.io/badge/MongoDB-47A248?style=for-the-badge&logo=mongodb)](https://www.mongodb.com/)
 
-Scalable IoT data processing system for high-volume data transfer, utilizing Go, Kafka, InfluxDB, and MongoDB for efficient real-time analytics and data delivery.
+A high-performance, scalable data streaming platform that efficiently delivers large datasets from multiple database sources (InfluxDB, MongoDB) to Apache Kafka with configurable parallelism and robust connection management.
 
 ## 🚀 Features
 
@@ -14,7 +14,6 @@ Scalable IoT data processing system for high-volume data transfer, utilizing Go,
 - **Dynamic Connection Management**: Runtime database connection registration and management
 - **Scalable Worker Pool**: Configurable worker pools for optimal throughput
 - **RESTful API**: Clean REST endpoints for data export and system management
-- **Protocol Buffer Support**: Efficient data serialization with protobuf
 - **Configurable Architecture**: Externalized configuration for easy deployment across environments
 
 ## 📋 Table of Contents
@@ -125,12 +124,6 @@ Create a `config.json` file in the server directory:
       "influxdb": "_time"
     },
     "systemDatabases": ["admin", "local", "config"]
-  },
-  "example": {
-    "personId": 1234,
-    "personName": "John Doe",
-    "personEmail": "jdoe@example.com",
-    "phoneNumber": "555-4321"
   }
 }
 ```
@@ -145,7 +138,6 @@ Create a `config.json` file in the server directory:
 | `database` | Database-specific connection and timeout settings |
 | `formats` | Date/time format strings for data processing |
 | `api` | API behavior defaults and system database exclusions |
-| `example` | Sample data for testing and protobuf examples |
 
 ### Client Configuration
 
@@ -229,71 +221,3 @@ curl "http://localhost:3001/data/query-by-time/?connection_id=mongo-prod&mongo_d
 ### Project Structure
 
 ```
-.
-├── server/                 # Server application
-│   ├── config.go          # Configuration loading
-│   ├── config.json        # Server configuration
-│   ├── database.go        # Database interface definitions
-│   ├── dispatcher.go      # Job dispatcher
-│   ├── handlers.go        # HTTP request handlers
-│   ├── influxdb_client.go # InfluxDB client implementation
-│   ├── job_processor.go   # Job processing logic
-│   ├── jobs.go           # Job definitions
-│   ├── kafka_utils.go    # Kafka utility functions
-│   ├── main.go           # Server entry point
-│   ├── mongodb_client.go # MongoDB client implementation
-│   ├── utils.go          # General utilities
-│   ├── workers.go        # Worker pool implementation
-│   └── examplepb/        # Protocol buffer definitions
-├── client/               # Client application
-│   ├── config/          # Client configuration
-│   ├── kafka/           # Kafka consumer
-│   ├── myhttp/          # HTTP client
-│   ├── shared/          # Shared utilities
-│   ├── util/            # Signal handling
-│   └── main.go          # Client entry point
-├── protobuf-generator/   # Protocol buffer generation
-└── README.md            # This file
-```
-
-### Running in Development
-
-```bash
-# Start server
-cd server
-go run .
-
-# Start client (in another terminal)
-cd client
-go run .
-```
-
-### Testing
-
-```bash
-# Run tests
-go test ./...
-
-# Run with coverage
-go test -coverprofile=coverage.out ./...
-go tool cover -html=coverage.out
-```
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
-
-## 📝 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🙏 Acknowledgments
-
-- [Confluent Kafka Go](https://github.com/confluentinc/confluent-kafka-go) for Kafka integration
-- [InfluxDB Go Client](https://github.com/influxdata/influxdb-client-go) for time-series data handling
-- [MongoDB Go Driver](https://github.com/mongodb/mongo-go-driver) for document database operations
-

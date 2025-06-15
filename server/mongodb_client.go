@@ -206,12 +206,18 @@ func (m *MongoDBClient) GetDatasets() ([]Dataset, error) {
 		}
 
 		for _, collName := range collections {
-			// For MongoDB, we'll use database as bucket and collection as measurement
 			datasets = append(datasets, Dataset{
-				BucketName:  dbName,
-				Measurement: collName,
-				TagKeyStr:   "", // MongoDB doesn't have predefined tags
-				TagValueStr: "",
+				DatabaseName:       dbName,   // MongoDB database
+				TableName:          collName, // MongoDB collection
+				TagKeyStr:          "",
+				TagValueStr:        "",
+				DatasetName:        fmt.Sprintf("%s:%s", dbName, collName),
+				DatasetDescription: fmt.Sprintf("Collection '%s' in database '%s'", collName, dbName),
+				DatasetType:        "MongoDB",
+				DatasetParams: map[string]interface{}{
+					"database":   dbName,
+					"collection": collName,
+				},
 			})
 		}
 	}
