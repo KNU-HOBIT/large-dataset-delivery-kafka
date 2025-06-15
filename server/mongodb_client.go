@@ -389,7 +389,7 @@ func (m *MongoDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecutio
 		}
 
 		// 파티션 결정
-		var partition int32 = kafka.PartitionAny
+		partition := kafka.PartitionAny
 		if execInfo.SendPartition >= 0 {
 			partition = int32(execInfo.SendPartition)
 		} else {
@@ -397,13 +397,16 @@ func (m *MongoDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecutio
 		}
 
 		// Kafka로 메시지 전송
-		producer.Produce(&kafka.Message{
+		if err := producer.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{
 				Topic:     &topic,
 				Partition: partition,
 			},
 			Value: jsonData,
-		}, nil)
+		}, nil); err != nil {
+			log.Printf("Error producing message to Kafka: %v", err)
+			continue
+		}
 		totalProcessed++
 	}
 

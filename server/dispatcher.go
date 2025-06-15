@@ -9,7 +9,7 @@ type Dispatcher struct {
 	JobQueue   chan Job
 	WorkerPool chan chan Job
 	MaxWorkers int
-	Workers    []Worker
+	Workers    []*Worker
 	wg         *sync.WaitGroup
 	stopped    bool
 	mu         sync.Mutex
@@ -60,11 +60,11 @@ func (d *Dispatcher) StopAllWorkers() {
 	defer d.mu.Unlock()
 
 	if d.stopped {
-		return // 이미 중지됨
+		return
 	}
 
-	for _, worker := range d.Workers {
-		worker.Stop()
+	for i := range d.Workers {
+		d.Workers[i].Stop()
 	}
 
 	close(d.WorkerPool)

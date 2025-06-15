@@ -9,7 +9,6 @@ import (
 )
 
 type Worker struct {
-	Dispatcher
 	ID           int
 	WorkerPool   chan chan Job
 	JobChannel   chan Job
@@ -17,9 +16,10 @@ type Worker struct {
 	producer     *kafka.Producer
 	connectionID string         // 이 워커가 담당할 connectionID
 	dbClient     DatabaseClient // 이 워커 전용 DB 클라이언트
+	dispatcher   *Dispatcher    // 포인터로 참조
 }
 
-func NewWorker(workerPool chan chan Job, id int, d *Dispatcher, connectionID string) Worker {
+func NewWorker(workerPool chan chan Job, id int, d *Dispatcher, connectionID string) *Worker {
 	// Kafka producer 초기화
 	producer, err := kafka.NewProducer(
 		&kafka.ConfigMap{
@@ -55,8 +55,8 @@ func NewWorker(workerPool chan chan Job, id int, d *Dispatcher, connectionID str
 		panic(fmt.Sprintf("Unsupported database type '%s' for worker %d", connInfo.DBType, id))
 	}
 
-	return Worker{
-		Dispatcher:   *d,
+	return &Worker{
+		dispatcher:   d, // 포인터 저장
 		ID:           id,
 		WorkerPool:   workerPool,
 		JobChannel:   make(chan Job),
@@ -110,8 +110,7 @@ func (w *Worker) Start() {
 					fmt.Printf("worker%d: job start about: %d~%d\n", w.ID, job.execInfo.StartOffset, job.execInfo.EndOffset)
 				}
 
-				var totalProcessed int = 0
-				totalProcessed = w.ReadDataAndSendDirectly(&job)
+				totalProcessed := w.ReadDataAndSendDirectly(&job)
 
 				// Kafka flush 처리
 				unflushed := w.producer.Flush(config.Kafka.FlushTimeoutMs)
@@ -133,7 +132,7 @@ func (w *Worker) Start() {
 				}
 				fmt.Printf("worker %d produced records count: %d job completed in %v\n", w.ID, totalProcessed, endTime.Sub(startTime))
 				job.messagesCh <- totalProcessed
-				w.Dispatcher.wg.Done() // Dispatcher의 WaitGroup도 완료 표시
+				w.dispatcher.wg.Done() // Dispatcher의 WaitGroup도 완료 표시
 
 			case <-w.quit:
 				w.producer.Flush(config.Kafka.FlushTimeoutMs)

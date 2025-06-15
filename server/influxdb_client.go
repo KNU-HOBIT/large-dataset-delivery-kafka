@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/base64"
 	"fmt"
 	"log"
 	"sort"
@@ -312,7 +311,7 @@ func (i *InfluxDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecuti
 		}
 
 		// 파티션 결정
-		var partition int32 = kafka.PartitionAny
+		partition := kafka.PartitionAny
 		if execInfo.SendPartition >= 0 {
 			partition = int32(execInfo.SendPartition)
 		} else {
@@ -320,13 +319,16 @@ func (i *InfluxDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecuti
 		}
 
 		// Kafka로 메시지 전송
-		producer.Produce(&kafka.Message{
+		if err := producer.Produce(&kafka.Message{
 			TopicPartition: kafka.TopicPartition{
 				Topic:     &topic,
 				Partition: partition,
 			},
 			Value: jsonData,
-		}, nil)
+		}, nil); err != nil {
+			log.Printf("Error producing message to Kafka: %v", err)
+			continue
+		}
 		totalProcessed++
 	}
 
@@ -364,24 +366,6 @@ func (i *InfluxDBClient) Close() error {
 }
 
 // Missing functions that are referenced in other files
-func decodeBase64(encoded string) []byte {
-	decoded, err := base64.StdEncoding.DecodeString(encoded)
-	if err != nil {
-		fmt.Println(err)
-	}
-	return decoded
-}
-
-func decodeValue(bucket, measurement, startValue string) (map[string]interface{}, error) {
-	// Protobuf 디코더 제거 - 이제 JSON만 처리
-	var jsonData map[string]interface{}
-	if err := jsoniter.ConfigCompatibleWithStandardLibrary.Unmarshal([]byte(startValue), &jsonData); err != nil {
-		return nil, fmt.Errorf("failed to unmarshal JSON: %v", err)
-	}
-
-	return jsonData, nil
-}
-
 func (i *InfluxDBClient) CalculateJobExecutions(totalRecords int64, jobCount int, params QueryParams) ([]JobExecutionInfo, error) {
 	// InfluxDB는 기존 시간 기반 분할 방식 사용
 	recordsPerJob := totalRecords / int64(jobCount)
