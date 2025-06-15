@@ -28,7 +28,7 @@ func NewInfluxDBClient(url, token, org string) (*InfluxDBClient, error) {
 	client := influxdb2.NewClientWithOptions(url, token,
 		influxdb2.DefaultOptions().
 			SetPrecision(time.Millisecond).
-			SetHTTPRequestTimeout(900))
+			SetHTTPRequestTimeout(uint(config.Database.InfluxDB.HTTPRequestTimeoutSeconds)))
 
 	return &InfluxDBClient{
 		client: &client,
@@ -79,7 +79,7 @@ func (i *InfluxDBClient) CheckStartEndRange(params QueryParams) (TimeRangeStr, e
 	}
 	if firstResults.Next() {
 		firstTime := firstResults.Record().Time()
-		startTsStr = firstTime.Format("2006-01-02T15:04:05.000Z")
+		startTsStr = firstTime.Format(config.Formats.DateTimeFormat)
 	}
 	if err := firstResults.Err(); err != nil {
 		return TimeRangeStr{}, fmt.Errorf("error reading first query results: %v", err)
@@ -92,7 +92,7 @@ func (i *InfluxDBClient) CheckStartEndRange(params QueryParams) (TimeRangeStr, e
 	}
 	if lastResults.Next() {
 		lastTime := lastResults.Record().Time()
-		endTsStr = lastTime.Format("2006-01-02T15:04:05.000Z")
+		endTsStr = lastTime.Format(config.Formats.DateTimeFormat)
 	}
 	if err := lastResults.Err(); err != nil {
 		return TimeRangeStr{}, fmt.Errorf("error reading last query results: %v", err)

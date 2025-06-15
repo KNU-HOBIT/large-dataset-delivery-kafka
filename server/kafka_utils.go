@@ -30,7 +30,7 @@ func setupKafkaProducerAndMetadata(endpoint KafkaEndPoint) (*kafka.Producer, map
 // loadKafkaMetadata loads metadata and offsets for a Kafka topic
 func loadKafkaMetadata(producer *kafka.Producer, topic string) (map[int32]int64, error) {
 	// Get metadata for the topic
-	metadata, err := producer.GetMetadata(&topic, false, 1000)
+	metadata, err := producer.GetMetadata(&topic, false, config.Kafka.WatermarkTimeoutMs)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +40,7 @@ func loadKafkaMetadata(producer *kafka.Producer, topic string) (map[int32]int64,
 	// Iterate over each partition to get the high watermark offset
 	for _, partition := range metadata.Topics[topic].Partitions {
 		// Use QueryWatermarkOffsets to get high offsets
-		_, high, err := producer.QueryWatermarkOffsets(topic, partition.ID, 1000)
+		_, high, err := producer.QueryWatermarkOffsets(topic, partition.ID, config.Kafka.WatermarkTimeoutMs)
 		if err != nil {
 			return nil, fmt.Errorf("failed to query watermark offsets for partition %d: %v", partition.ID, err)
 		}

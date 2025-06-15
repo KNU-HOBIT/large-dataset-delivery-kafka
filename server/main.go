@@ -69,7 +69,7 @@ func main() {
 	// dispatcher.StopAllWorkers()
 
 	// 서버 종료를 위한 새로운 컨텍스트 생성
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Server.ShutdownTimeoutSeconds)*time.Second)
 	defer cancel()
 
 	// 서버 정상 종료
@@ -83,11 +83,11 @@ func main() {
 func example() {
 	// 메시지 생성
 	person := &pb.Person{
-		Id:    1234,
-		Name:  "John Doe",
-		Email: "jdoe@example.com",
+		Id:    int32(config.Example.PersonID),
+		Name:  config.Example.PersonName,
+		Email: config.Example.PersonEmail,
 		Phones: []*pb.Person_PhoneNumber{
-			{Number: "555-4321", Type: pb.PhoneType_PHONE_TYPE_HOME},
+			{Number: config.Example.PhoneNumber, Type: pb.PhoneType_PHONE_TYPE_HOME},
 		},
 	}
 

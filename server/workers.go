@@ -114,14 +114,14 @@ func (w *Worker) Start() {
 				totalProcessed = w.ReadDataAndSendDirectly(&job)
 
 				// Kafka flush 처리
-				unflushed := w.producer.Flush(15 * 1000)
+				unflushed := w.producer.Flush(config.Kafka.FlushTimeoutMs)
 				for unflushed > 0 {
 					if !flushEntered {
 						flushStartTime = time.Now()
 						flushEntered = true
 					}
 					fmt.Printf("worker%d: unflushed %d msg.\n", w.ID, unflushed)
-					unflushed = w.producer.Flush(15 * 1000)
+					unflushed = w.producer.Flush(config.Kafka.FlushTimeoutMs)
 				}
 
 				var endTime time.Time
@@ -136,7 +136,7 @@ func (w *Worker) Start() {
 				w.Dispatcher.wg.Done() // Dispatcher의 WaitGroup도 완료 표시
 
 			case <-w.quit:
-				w.producer.Flush(15 * 1000)
+				w.producer.Flush(config.Kafka.FlushTimeoutMs)
 				fmt.Printf("worker %d end\n", w.ID)
 				return
 			}

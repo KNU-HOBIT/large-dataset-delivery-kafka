@@ -46,7 +46,7 @@ func calculatePartitionAndRecords(client DatabaseClient, timeRange TimeRangeStr,
 	}
 	defer producer.Close()
 
-	metadata, err := producer.GetMetadata(&endpoint.topic, false, 5000)
+	metadata, err := producer.GetMetadata(&endpoint.topic, false, config.Kafka.MetadataTimeoutMs)
 	if err != nil {
 		return 0, 0, err
 	}

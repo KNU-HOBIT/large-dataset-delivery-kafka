@@ -26,11 +26,11 @@ type MongoDBClient struct {
 func NewMongoDBClient(url, database string) (*MongoDBClient, error) {
 	// Configure client options with connection pool settings
 	clientOptions := options.Client().ApplyURI(url).
-		SetMaxPoolSize(100).                       // 최대 연결 수
-		SetMaxConnIdleTime(30 * time.Second).      // 유휴 연결 타임아웃
-		SetConnectTimeout(10 * time.Second).       // 연결 타임아웃
-		SetSocketTimeout(30 * time.Second).        // 소켓 타임아웃
-		SetServerSelectionTimeout(5 * time.Second) // 서버 선택 타임아웃
+		SetMaxPoolSize(uint64(config.Database.MongoDB.MaxPoolSize)).                                                  // 최대 연결 수
+		SetMaxConnIdleTime(time.Duration(config.Database.MongoDB.MaxConnIdleTimeSeconds) * time.Second).              // 유휴 연결 타임아웃
+		SetConnectTimeout(time.Duration(config.Database.MongoDB.ConnectTimeoutSeconds) * time.Second).                // 연결 타임아웃
+		SetSocketTimeout(time.Duration(config.Database.MongoDB.SocketTimeoutSeconds) * time.Second).                  // 소켓 타임아웃
+		SetServerSelectionTimeout(time.Duration(config.Database.MongoDB.ServerSelectionTimeoutSeconds) * time.Second) // 서버 선택 타임아웃
 
 	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
@@ -38,7 +38,7 @@ func NewMongoDBClient(url, database string) (*MongoDBClient, error) {
 	}
 
 	// Test the connection
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Database.MongoDB.QueryTimeoutSeconds)*time.Second)
 	defer cancel()
 	err = client.Ping(ctx, nil)
 	if err != nil {
@@ -102,8 +102,8 @@ func (m *MongoDBClient) CheckStartEndRange(params QueryParams) (TimeRangeStr, er
 	}
 
 	return TimeRangeStr{
-		startStr: startTime.Format("2006-01-02T15:04:05.000Z"),
-		endStr:   endTime.Format("2006-01-02T15:04:05.000Z"),
+		startStr: startTime.Format(config.Formats.DateTimeFormat),
+		endStr:   endTime.Format(config.Formats.DateTimeFormat),
 	}, nil
 }
 
@@ -132,7 +132,7 @@ func (m *MongoDBClient) CalculateEndTimes(startStr string, recordsPerJob int64, 
 		return []string{}, nil
 	}
 
-	startTime, err := time.Parse("2006-01-02T15:04:05.000Z", startStr)
+	startTime, err := time.Parse(config.Formats.DateTimeFormat, startStr)
 	if err != nil {
 		return nil, err
 	}
@@ -188,7 +188,14 @@ func (m *MongoDBClient) GetDatasets() ([]Dataset, error) {
 	var datasets []Dataset
 	for _, dbName := range databases {
 		// Skip system databases
-		if dbName == "admin" || dbName == "local" || dbName == "config" {
+		isSystemDB := false
+		for _, systemDB := range config.API.SystemDatabases {
+			if dbName == systemDB {
+				isSystemDB = true
+				break
+			}
+		}
+		if isSystemDB {
 			continue
 		}
 
@@ -224,7 +231,7 @@ func (m *MongoDBClient) QueryDatabase(params QueryParams) (map[string]interface{
 	}
 
 	// Find first and last records
-	var sortField string = "_id" // Default to _id for consistent ordering
+	var sortField string = config.API.DefaultSort.MongoDB // Default to _id for consistent ordering
 	if mongoParams.TimeField != "" {
 		sortField = mongoParams.TimeField
 	}
@@ -334,8 +341,8 @@ func (m *MongoDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecutio
 		SetLimit(recordsToProcess).    // 처리할 레코드 수
 		SetSort(bson.M{"_id": 1})      // 일관된 정렬 보장
 
-	// 컨텍스트 타임아웃 설정 (30초)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	// 컨텍스트 타임아웃 설정
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(config.Database.MongoDB.ContextTimeoutSeconds)*time.Second)
 	defer cancel()
 
 	// 데이터 조회
