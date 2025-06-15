@@ -2,13 +2,13 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
+	jsoniter "github.com/json-iterator/go"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -369,7 +369,7 @@ func (m *MongoDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecutio
 		dataMap["_database"] = mongoParams.Database
 
 		// JSON으로 변환
-		jsonData, err := json.Marshal(dataMap)
+		jsonData, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(dataMap)
 		if err != nil {
 			log.Printf("Error marshaling document: %v", err)
 			continue

@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
 	"log"
 	"sort"
@@ -392,7 +391,7 @@ func (i *InfluxDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecuti
 			}
 
 			// JSON으로 변환
-			jsonData, err := json.Marshal(dataMap)
+			jsonData, err := jsoniter.ConfigCompatibleWithStandardLibrary.Marshal(dataMap)
 			if err != nil {
 				log.Printf("Error marshaling record: %v", err)
 				continue
