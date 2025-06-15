@@ -36,36 +36,6 @@ func processJobs(client DatabaseClient, timeRange TimeRangeStr, params QueryPara
 	return totalMessages, startTime, endTime, offsetsData, nil
 }
 
-// processJobsOriginal handles job processing with original job count (no adjustment)
-func processJobsOriginal(client DatabaseClient, timeRange TimeRangeStr, params QueryParams, endpoint KafkaEndPoint, dropLast bool) (int, int64, int64, []string, error) {
-	partitionCount, totalRecords, err := calculatePartitionAndRecords(client, timeRange, params, endpoint)
-	if err != nil {
-		return 0, 0, 0, nil, err
-	}
-
-	jobList, err := createJobDetailsAndList(client, totalRecords, partitionCount, params, endpoint, dropLast)
-	if err != nil {
-		return 0, 0, 0, nil, err
-	}
-
-	producer, startOffsets, err := setupKafkaProducerAndMetadata(endpoint)
-	if err != nil {
-		return 0, 0, 0, nil, err
-	}
-	defer producer.Close()
-
-	dispatcher := NewDispatcher(config.Jobs.WorkerNum)
-	dispatcher.Run(params.ConnectionID)
-	defer dispatcher.StopAllWorkers()
-
-	totalMessages, startTime, endTime, offsetsData, err := executeAndProcessJobs(jobList, endpoint.topic, producer, startOffsets, dispatcher)
-	if err != nil {
-		return 0, 0, 0, nil, err
-	}
-
-	return totalMessages, startTime, endTime, offsetsData, nil
-}
-
 // calculatePartitionAndRecords calculates Kafka partition count and total records
 func calculatePartitionAndRecords(client DatabaseClient, timeRange TimeRangeStr, params QueryParams, endpoint KafkaEndPoint) (int, int64, error) {
 	producer, err := kafka.NewProducer(&kafka.ConfigMap{
@@ -88,23 +58,6 @@ func calculatePartitionAndRecords(client DatabaseClient, timeRange TimeRangeStr,
 	}
 
 	return partitionCount, totalRecords, nil
-}
-
-// createJobDetailsAndList creates job list for all database types
-func createJobDetailsAndList(client DatabaseClient, totalRecords int64, partitionCount int, params QueryParams, endpoint KafkaEndPoint, dropLast bool) (*JobList, error) {
-	jobCount := config.Jobs.DividedJobs
-	if dropLast {
-		jobCount--
-	}
-
-	// Database type에 따라 다른 Job 실행 방식 사용
-	execInfos, err := client.CalculateJobExecutions(totalRecords, jobCount, params)
-	if err != nil {
-		return nil, err
-	}
-
-	jobList := createJobListFromExecutions(execInfos, partitionCount, params, endpoint)
-	return jobList, nil
 }
 
 // createJobDetailsAndListWithEqualDistribution creates job list with partition-aligned job count
