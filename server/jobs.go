@@ -2,38 +2,62 @@ package main
 
 import (
 	"fmt"
-	"sync"
 	"time"
 )
 
 type JobList struct {
 	partitionCount int
 	messagesCh     chan int
-	wg             *sync.WaitGroup
 	jobs           []*Job
 }
 
 type Job struct {
-	JobList       // embedding JobList struct
-	startStr      string
-	endStr        string
-	sendPartition int
+	jobList      *JobList
+	connectionID string
+	params       QueryParams
+	execInfo     JobExecutionInfo // startStr, endStr 대신 JobExecutionInfo 사용
+	messagesCh   chan int
 }
 
-func newJob(startStr, endStr string, sendPartition int, jobList *JobList) *Job {
-	return &Job{
-		JobList:       *jobList,
-		startStr:      startStr,
-		endStr:        endStr,
-		sendPartition: sendPartition,
+// JobExecutionInfo holds job execution parameters
+type JobExecutionInfo struct {
+	// Time-based execution (for InfluxDB)
+	StartStr string
+	EndStr   string
+
+	// Offset-based execution (for MongoDB)
+	StartOffset int64
+	EndOffset   int64
+
+	// Common fields
+	SendPartition int
+	SendTopic     string
+}
+
+func newJob(jobList *JobList, connectionID string, params QueryParams, execInfo JobExecutionInfo, messagesCh chan int) Job {
+	return Job{
+		jobList:      jobList,
+		connectionID: connectionID,
+		params:       params,
+		execInfo:     execInfo,
+		messagesCh:   messagesCh,
 	}
 }
 
 // printJob logs the details of a single job to the console in a readable format.
 func printJob(job *Job) {
-	fmt.Printf("  Start Time:     %s\n", job.startStr)
-	fmt.Printf("  End Time:       %s\n", job.endStr)
-	fmt.Printf("  Send Partition: %d\n", job.sendPartition)
+	if job == nil {
+		fmt.Printf("  Job is nil\n")
+		return
+	}
+	if job.params.DBType == "influx" {
+		fmt.Printf("  Start Time:     %s\n", job.execInfo.StartStr)
+		fmt.Printf("  End Time:       %s\n", job.execInfo.EndStr)
+	} else if job.params.DBType == "mongo" {
+		fmt.Printf("  Start Offset:   %d\n", job.execInfo.StartOffset)
+		fmt.Printf("  End Offset:     %d\n", job.execInfo.EndOffset)
+	}
+	fmt.Printf("  Send Partition: %d\n", job.execInfo.SendPartition)
 }
 
 // printJobList logs the details of the given job list to the console in a readable format.
@@ -41,7 +65,6 @@ func printJob(job *Job) {
 func printJobList(jobList *JobList) {
 	fmt.Println("Job List")
 	fmt.Printf("  Messages Channel: %v\n", jobList.messagesCh)
-	fmt.Printf("  Wait Group:     %v\n", jobList.wg)
 	fmt.Println()
 	fmt.Println("---------")
 	for i, job := range jobList.jobs {
@@ -55,11 +78,10 @@ func executeJobs(jobList *JobList, dispatcher *Dispatcher) (int, time.Duration, 
 	startTime := time.Now()
 
 	for _, job := range jobList.jobs {
-		jobList.wg.Add(1)
-		dispatcher.JobQueue <- *job
+		dispatcher.SubmitJob(job)
 	}
 
-	jobList.wg.Wait()
+	dispatcher.WaitForAllJobs()
 
 	endTime := time.Now()
 	elapsed := endTime.Sub(startTime)

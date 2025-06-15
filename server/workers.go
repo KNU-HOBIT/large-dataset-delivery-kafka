@@ -1,86 +1,99 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/confluentinc/confluent-kafka-go/kafka"
-	influxdb2 "github.com/influxdata/influxdb-client-go/v2"
 )
 
 type Worker struct {
 	Dispatcher
-	ID         int
-	WorkerPool chan chan Job
-	JobChannel chan Job
-	quit       chan bool
+	ID           int
+	WorkerPool   chan chan Job
+	JobChannel   chan Job
+	quit         chan bool
+	producer     *kafka.Producer
+	connectionID string         // 이 워커가 담당할 connectionID
+	dbClient     DatabaseClient // 이 워커 전용 DB 클라이언트
 }
 
-func NewWorker(workerPool chan chan Job, id int, d *Dispatcher) Worker {
+func NewWorker(workerPool chan chan Job, id int, d *Dispatcher, connectionID string) Worker {
+	// Kafka producer 초기화
+	producer, err := kafka.NewProducer(
+		&kafka.ConfigMap{
+			"bootstrap.servers":  config.Kafka.BootstrapServers,
+			"acks":               config.Kafka.Acks,
+			"enable.idempotence": config.Kafka.EnableIdempotence,
+			"compression.type":   config.Kafka.CompressionType,
+		})
+	if err != nil {
+		panic(fmt.Sprintf("Failed to create Kafka producer for worker %d: %v", id, err))
+	}
+
+	// connectionManager에서 연결 정보 가져오기
+	connInfo, err := connectionManager.GetConnectionInfo(connectionID)
+	if err != nil {
+		panic(fmt.Sprintf("Failed to get connection info '%s' for worker %d: %v", connectionID, id, err))
+	}
+
+	// 연결 정보를 바탕으로 새로운 DatabaseClient 생성 (handleDBConnectionRegister와 같은 로직)
+	var dbClient DatabaseClient
+	switch connInfo.DBType {
+	case "influx":
+		dbClient, err = NewInfluxDBClient(connInfo.URL, connInfo.Token, connInfo.Org)
+		if err != nil {
+			panic(fmt.Sprintf("Failed to create InfluxDB client for worker %d: %v", id, err))
+		}
+	case "mongo":
+		dbClient, err = NewMongoDBClient(connInfo.URL, connInfo.Database)
+		if err != nil {
+			panic(fmt.Sprintf("Failed to create MongoDB client for worker %d: %v", id, err))
+		}
+	default:
+		panic(fmt.Sprintf("Unsupported database type '%s' for worker %d", connInfo.DBType, id))
+	}
+
 	return Worker{
-		Dispatcher: *d,
-		ID:         id,
-		WorkerPool: workerPool,
-		JobChannel: make(chan Job),
-		quit:       make(chan bool),
+		Dispatcher:   *d,
+		ID:           id,
+		WorkerPool:   workerPool,
+		JobChannel:   make(chan Job),
+		quit:         make(chan bool),
+		producer:     producer,
+		connectionID: connectionID,
+		dbClient:     dbClient,
 	}
 }
 
-func (w *Worker) handleDeliveryReports(producer *kafka.Producer) {
+func (w *Worker) handleDeliveryReports() {
 	for {
 		select {
-		case e := <-producer.Events():
+		case e := <-w.producer.Events():
 			switch ev := e.(type) {
 			case *kafka.Message:
 				if ev.TopicPartition.Error != nil {
 					fmt.Printf("Delivery failed: %v\n", ev.TopicPartition)
 				}
-				// else {
-				// 	// fmt.Printf("Delivered message to %v\n", ev.TopicPartition)
-				// }
 			}
 
 		case <-w.quit:
+			fmt.Printf("worker %d stop\n", w.ID)
 			fmt.Println("Stopping handleDeliveryReports goroutine...")
-			w.Stop()
-			return // 고루틴 종료
+			return
 		}
 	}
 }
 
 func (w *Worker) Start() {
-
 	go func() {
-		fmt.Printf("worker %d start\n", w.ID)
-		//INIT influx client
-		client := influxdb2.NewClientWithOptions(w.db_config.url, w.db_config.token,
-			influxdb2.DefaultOptions().
-				SetPrecision(time.Millisecond).
-				SetHTTPRequestTimeout(900))
-		//INIT kafka producer
-		producer, err := kafka.NewProducer(
-			&kafka.ConfigMap{
-				"bootstrap.servers":  w.kafka_config.bootstrapServers,
-				"acks":               config.Kafka.Acks,
-				"enable.idempotence": config.Kafka.EnableIdempotence,
-				"compression.type":   config.Kafka.CompressionType,
-				// "debug":              "msg",
-				// "linger.ms":          500,
-				// "batch.size":         5000000,
-				// "queue.buffering.max.kbytes":   MaxKBytes,
-				// "queue.buffering.max.messages": MaxMessages,
+		fmt.Printf("worker %d start (connectionID: %s)\n", w.ID, w.connectionID)
+		defer w.producer.Close()
+		defer w.dbClient.Close()
 
-			})
-		if err != nil {
-			panic(err)
-		}
-		defer client.Close()
-		defer producer.Close()
-
-		// Kafka Producer의 이벤트를 처리하는 고루틴을 시작합니다.
-		go w.handleDeliveryReports(producer)
+		// Kafka Producer의 이벤트를 처리하는 고루틴을 시작
+		go w.handleDeliveryReports()
 
 		for {
 			// 현재 워커를 사용 가능한 워커 풀에 추가
@@ -88,41 +101,42 @@ func (w *Worker) Start() {
 
 			select {
 			case job := <-w.JobChannel:
-
-				// 여기서 실제 작업을 처리
-				// 예제: job의 데이터를 출력
-				flushEntered := false                // flush 작업 진입 여부
-				var flushStartTime time.Time         // flush 작업 시작 시간
-				var startTime time.Time = time.Now() // 작업 시작 시간 기록
-				fmt.Printf("worker%d: job start about: %s~%s\n", w.ID, job.startStr, job.endStr)
+				flushEntered := false
+				var flushStartTime time.Time
+				var startTime time.Time = time.Now()
+				if job.params.DBType == "influx" {
+					fmt.Printf("worker%d: job start about: %s~%s\n", w.ID, job.execInfo.StartStr, job.execInfo.EndStr)
+				} else if job.params.DBType == "mongo" {
+					fmt.Printf("worker%d: job start about: %d~%d\n", w.ID, job.execInfo.StartOffset, job.execInfo.EndOffset)
+				}
 
 				var totalProcessed int = 0
-				totalProcessed = w.ReadDataAndSendDirectly(&client, &job, producer)
+				totalProcessed = w.ReadDataAndSendDirectly(&job)
 
-				// Ensure the delivery report handler has finished
-				unflushed := producer.Flush(15 * 1000) // 15 seconds
+				// Kafka flush 처리
+				unflushed := w.producer.Flush(15 * 1000)
 				for unflushed > 0 {
 					if !flushEntered {
-						flushStartTime = time.Now() // 첫 flush 작업 시작 시간 기록
+						flushStartTime = time.Now()
 						flushEntered = true
 					}
 					fmt.Printf("worker%d: unflushed %d msg.\n", w.ID, unflushed)
-					unflushed = producer.Flush(15 * 1000) // 15 seconds
+					unflushed = w.producer.Flush(15 * 1000)
 				}
+
 				var endTime time.Time
 				if flushEntered {
-					endTime = time.Now() // flush 진입이 있었을 경우, flush 완료 시간을 종료 시간으로 기록
+					endTime = time.Now()
 					fmt.Printf("worker%d: flush duration %v\n", w.ID, endTime.Sub(flushStartTime))
 				} else {
-					endTime = time.Now() // flush 진입이 없었을 경우, 현재 시간을 종료 시간으로 기록
+					endTime = time.Now()
 				}
 				fmt.Printf("worker %d produced records count: %d job completed in %v\n", w.ID, totalProcessed, endTime.Sub(startTime))
 				job.messagesCh <- totalProcessed
-				job.wg.Done() // 작업 처리 완료를 알림
+				w.Dispatcher.wg.Done() // Dispatcher의 WaitGroup도 완료 표시
 
 			case <-w.quit:
-				// 워커 종료
-				producer.Flush(15 * 1000)
+				w.producer.Flush(15 * 1000)
 				fmt.Printf("worker %d end\n", w.ID)
 				return
 			}
@@ -130,51 +144,23 @@ func (w *Worker) Start() {
 	}()
 }
 
-func (w *Worker) ReadDataAndSendDirectly(client *influxdb2.Client, job *Job, producer *kafka.Producer) int {
-	queryAPI := (*client).QueryAPI(w.db_config.org)
-	query := fmt.Sprintf(`
-	from(bucket: "%s")
-	|> range(start: %s, stop: %s)
-	|> filter(fn: (r) => r._measurement == "%s")
-	`, w.db_config.bucket, job.startStr, job.endStr, w.db_config.measurement)
+func (w *Worker) ReadDataAndSendDirectly(job *Job) int {
 
-	if w.db_config.tagKey != "" && w.db_config.tagValue != "" {
-		query += fmt.Sprintf(`|> filter(fn: (r) => r["%s"] == "%s")`,
-			w.db_config.tagKey, w.db_config.tagValue)
-	}
-
+	// 데이터베이스에서 데이터 읽고 Kafka로 전송
 	startTime := time.Now()
-	results, err := queryAPI.Query(context.Background(), query)
+	totalProcessed, err := w.dbClient.ReadDataAndSend(
+		job.params,
+		job.execInfo, // JobExecutionInfo 전달
+		w.producer,
+		job.execInfo.SendTopic,
+		job.jobList.partitionCount,
+	)
 	if err != nil {
-		log.Fatal("queryAPI:", err)
+		log.Printf("Error reading data and sending to Kafka: %v", err)
+		return 0
 	}
 	elapsed := time.Since(startTime)
-	fmt.Printf("client: %x Query took %s\n", client, elapsed)
-
-	totalProcessed := 0
-	for results.Next() {
-		record := results.Record()
-		if v, ok := record.Values()["_value"].(string); ok {
-			var partition int32 = kafka.PartitionAny
-			if job.sendPartition >= 0 {
-				partition = int32(job.sendPartition)
-			} else {
-				partition = int32(totalProcessed % job.partitionCount)
-			}
-
-			producer.Produce(&kafka.Message{
-				TopicPartition: kafka.TopicPartition{
-					Topic:     &w.kafka_config.topic,
-					Partition: partition,
-				},
-				Value: []byte(decodeBase64(v)),
-			}, nil)
-			totalProcessed++
-		}
-	}
-	if err := results.Err(); err != nil {
-		log.Fatal(err)
-	}
+	fmt.Printf("Database query and Kafka send took %s\n", elapsed)
 
 	return totalProcessed
 }

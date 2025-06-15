@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	_ "net/http/pprof"
 	"os"
@@ -17,12 +18,9 @@ import (
 
 var config, _ = LoadConfig("config.json")
 
-var url string = config.InfluxDB.URL
-var token string = config.InfluxDB.Token
-
 func main() {
-
 	example()
+
 	// 서버 설정 및 포트 설정
 	server := &http.Server{
 		Addr: config.Server.Port, // 포트 3001 설정
@@ -36,6 +34,27 @@ func main() {
 
 	// 별도의 고루틴에서 HTTP 서버 시작
 	go func() {
+		// 서버 시작 시, 현재 IP와 PORT를 출력
+		addrs, err := net.InterfaceAddrs()
+		if err != nil {
+			log.Fatalf("Failed to get interface addresses: %v", err)
+		}
+
+		var ip string
+		for _, addr := range addrs {
+			if ipnet, ok := addr.(*net.IPNet); ok && !ipnet.IP.IsLoopback() {
+				if ipnet.IP.To4() != nil {
+					ip = ipnet.IP.String()
+					break
+				}
+			}
+		}
+
+		if ip == "" {
+			log.Fatalf("Failed to get external IP address")
+		}
+
+		fmt.Printf("Server started at http://%s%s\n", ip, config.Server.Port)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("ListenAndServe error: %v", err)
 		}

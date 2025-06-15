@@ -15,13 +15,10 @@ type Config struct {
 		EnableIdempotence string `json:"enableIdempotence"`
 		CompressionType   string `json:"compressionType"`
 	} `json:"kafka"`
-	InfluxDB struct {
-		URL   string `json:"url"`
-		Token string `json:"token"`
-	} `json:"influxDB"`
 	Jobs struct {
 		WorkerNum        int `json:"workerNum"`
 		JobQueueCapacity int `json:"jobQueueCapacity"`
+		DividedJobs      int `json:"dividedJobs"`
 		JobsPerPartition int `json:"jobsPerPartition"`
 	} `json:"jobs"`
 }
