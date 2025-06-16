@@ -270,7 +270,7 @@ func (i *InfluxDBClient) ReadDataAndSend(params QueryParams, execInfo JobExecuti
 
 	query := fmt.Sprintf(`
         from(bucket:"%s")
-        |> range(start: %s, stop: %s)
+	|> range(start: %s, stop: %s)
         |> filter(fn: (r) => r._measurement == "%s")`,
 		influxParams.Bucket, execInfo.StartStr, execInfo.EndStr, influxParams.Measurement)
 

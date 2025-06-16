@@ -3,7 +3,7 @@ BINARY_NAME=large-dataset-server
 DOCKER_IMAGE=large-dataset-server
 DOCKER_TAG=latest
 BUILD_DIR=build
-CONFIG_PATH=configs/development.yaml
+CONFIG_PATH=config.json
 
 # Go 관련 변수
 GOPATH=$(shell go env GOPATH)
@@ -26,7 +26,14 @@ help:
 	@echo "$(GREEN)Available targets:$(NC)"
 	@echo "  $(YELLOW)build$(NC)         - Build the application"
 	@echo "  $(YELLOW)clean$(NC)         - Clean build artifacts"
-	@echo "  $(YELLOW)test$(NC)          - Run tests"
+	@echo "  $(YELLOW)test$(NC)          - Run unit tests"
+	@echo "  $(YELLOW)test-coverage$(NC) - Run tests with coverage report"
+	@echo "  $(YELLOW)test-utils$(NC)    - Run utils-specific tests"
+	@echo "  $(YELLOW)test-config$(NC)   - Run config-specific tests"
+	@echo "  $(YELLOW)test-database$(NC) - Run database-specific tests"
+	@echo "  $(YELLOW)test-kafka$(NC)    - Run Kafka utils tests"
+	@echo "  $(YELLOW)test-unit-all$(NC) - Run all unit tests"
+	@echo "  $(YELLOW)test-watch$(NC)    - Run tests in watch mode"
 	@echo "  $(YELLOW)test-integration$(NC) - Run integration tests"
 	@echo "  $(YELLOW)lint$(NC)          - Run linter"
 	@echo "  $(YELLOW)run$(NC)           - Run the application locally"
@@ -50,7 +57,7 @@ build:
 	mkdir -p $(BUILD_DIR)
 	CGO_ENABLED=0 GOOS=$(GOOS) GOARCH=$(GOARCH) go build \
 		-ldflags="-w -s -X main.version=$(shell git describe --tags --always --dirty)" \
-		-o $(BUILD_DIR)/$(BINARY_NAME) ./cmd/server
+		-o $(BUILD_DIR)/$(BINARY_NAME) .
 	@echo "$(GREEN)Build complete: $(BUILD_DIR)/$(BINARY_NAME)$(NC)"
 
 # 정리
@@ -83,7 +90,7 @@ lint:
 # 로컬 실행
 run:
 	@echo "$(GREEN)Starting application locally...$(NC)"
-	CONFIG_PATH=$(CONFIG_PATH) go run ./cmd/server serve
+	CONFIG_PATH=$(CONFIG_PATH) go run .
 
 # Docker 빌드
 docker-build:
@@ -160,4 +167,49 @@ logs:
 # 상태 확인
 status:
 	@echo "$(GREEN)Checking application status...$(NC)"
-	curl -f http://localhost:3001/health || echo "$(RED)Application is not running$(NC)" 
+	curl -f http://localhost:3001/health || echo "$(RED)Application is not running$(NC)"
+
+# 테스트 관련 타겟들
+test:
+	@echo "$(GREEN)Running unit tests...$(NC)"
+	go test -v -short ./...
+	@echo "$(GREEN)Tests complete!$(NC)"
+
+test-coverage:
+	@echo "$(GREEN)Running tests with coverage...$(NC)"
+	go test -v -coverprofile=coverage.out ./...
+	go tool cover -html=coverage.out -o coverage.html
+	@echo "$(GREEN)Coverage report generated: coverage.html$(NC)"
+
+test-watch:
+	@echo "$(GREEN)Running tests in watch mode...$(NC)"
+	@if command -v entr >/dev/null 2>&1; then \
+		find . -name '*.go' | entr -c go test -v ./...; \
+	else \
+		echo "$(YELLOW)Install entr for watch mode: apt-get install entr$(NC)"; \
+	fi
+
+test-utils:
+	@echo "$(GREEN)Testing utils functions...$(NC)"
+	go test -v -run TestGroupRecords
+	@echo "$(GREEN)Utils tests complete!$(NC)"
+
+test-config:
+	@echo "$(GREEN)Testing config functions...$(NC)"
+	go test -v -run TestLoadConfig -run TestConfig_Structure
+	@echo "$(GREEN)Config tests complete!$(NC)"
+
+test-unit-all:
+	@echo "$(GREEN)Running all unit tests...$(NC)"
+	go test -v -run TestGroupRecords -run TestLoadConfig -run TestConfig_Structure -run TestCreateInfluxQueryParams -run TestCreateMongoQueryParams -run TestCreateOffsetsData
+	@echo "$(GREEN)All unit tests complete!$(NC)"
+
+test-database:
+	@echo "$(GREEN)Testing database functions...$(NC)"
+	go test -v -run TestCreateInfluxQueryParams -run TestCreateMongoQueryParams -run TestQueryParams_Get -run TestNewConnectionManager
+	@echo "$(GREEN)Database tests complete!$(NC)"
+
+test-kafka:
+	@echo "$(GREEN)Testing Kafka utils functions...$(NC)"
+	go test -v -run TestCreateOffsetsData
+	@echo "$(GREEN)Kafka utils tests complete!$(NC)"

@@ -13,7 +13,14 @@ import (
 	"time"
 )
 
-var config, _ = LoadConfig("config.json")
+func getConfigPath() string {
+	if configPath := os.Getenv("CONFIG_PATH"); configPath != "" {
+		return configPath
+	}
+	return "config.json"
+}
+
+var config, _ = LoadConfig(getConfigPath())
 
 func main() {
 	// 서버 설정 및 포트 설정
